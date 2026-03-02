@@ -1,47 +1,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Mercer Systems — index.js
-// Reasoning loop with live CoinGecko price data + mock portfolio positions
+// Reasoning loop with live CoinGecko price data + live or mock portfolio
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dotenv/config';
 import { reason, printDecision } from './agent/reasoning.js';
 import { MANDATE_PRESETS } from './agent/mandate.js';
 import { fetchMarketData } from './market/coingecko.js';
-
-// ── Base Portfolio State ───────────────────────────────────────────────────────
-// Quantities and entry prices are fixed (would come from on-chain wallet in prod).
-// Current prices, valueUsd, and pnlPct are recalculated from live Jupiter data.
-
-const basePortfolio = {
-  walletAddress: 'MockWallet1111111111111111111111111111111111',
-  peakValueUsd: 0,       // Reset — recalculated from live prices on first run
-  cashUsd: 5_000,        // Uninvested USDC
-  holdings: [
-    { symbol: 'SOL',  quantity: 149.33,      entryPrice: 81.46      },
-    { symbol: 'JUP',  quantity: 11_150,      entryPrice: 0.152383   },
-    { symbol: 'BONK', quantity: 310_000_000, entryPrice: 0.00000591 },
-    { symbol: 'WIF',  quantity: 1_920,       entryPrice: 0.200653   },
-  ],
-};
-
-// ── Live Portfolio Builder ────────────────────────────────────────────────────
-// Applies live CoinGecko prices to recalculate position values and PnL.
-
-function buildLivePortfolio(base, market) {
-  const holdings = base.holdings.map((h) => {
-    const currentPrice = market[h.symbol]?.price ?? h.entryPrice;
-    const valueUsd     = currentPrice * h.quantity;
-    const pnlPct       = ((currentPrice - h.entryPrice) / h.entryPrice) * 100;
-    return { ...h, currentPrice, valueUsd, pnlPct };
-  });
-
-  const totalValueUsd = holdings.reduce((sum, h) => sum + h.valueUsd, 0) + base.cashUsd;
-
-  // Seed peak from current value if not set, so drawdown starts at 0%
-  const peakValueUsd = base.peakValueUsd > 0 ? base.peakValueUsd : totalValueUsd;
-
-  return { ...base, holdings, totalValueUsd, peakValueUsd };
-}
+import { DEFAULT_BASE_PORTFOLIO, buildLivePortfolio } from './agent/portfolio.js';
+import { fetchWalletPortfolio } from './wallet/solana.js';
 
 // ── Active Mandate ────────────────────────────────────────────────────────────
 // Switch to 'conservative' or 'aggressive' to see different behavior.
@@ -59,7 +26,25 @@ async function main() {
   console.log('╚══════════════════════════════════════════╝');
   console.log('\x1b[0m');
 
-  // ── Step 1: Fetch live market data from CoinGecko ────────────────────────
+  // ── Step 1: Resolve base portfolio (live wallet or mock fallback) ─────────
+  const { SOLANA_RPC_URL, WALLET_ADDRESS } = process.env;
+
+  let basePortfolio;
+  if (SOLANA_RPC_URL && WALLET_ADDRESS) {
+    console.log(`[Mercer] Fetching on-chain balances for ${WALLET_ADDRESS}...`);
+    try {
+      basePortfolio = await fetchWalletPortfolio(WALLET_ADDRESS, SOLANA_RPC_URL);
+      console.log('[Mercer] On-chain balances loaded.\n');
+    } catch (err) {
+      console.warn('\x1b[33m[Mercer] Wallet fetch failed — falling back to mock portfolio.\x1b[0m', err.message);
+      basePortfolio = DEFAULT_BASE_PORTFOLIO;
+    }
+  } else {
+    console.warn('\x1b[33m[Mercer] SOLANA_RPC_URL or WALLET_ADDRESS not set — using mock portfolio.\x1b[0m\n');
+    basePortfolio = DEFAULT_BASE_PORTFOLIO;
+  }
+
+  // ── Step 2: Fetch live market data from CoinGecko ────────────────────────
   console.log('[Mercer] Fetching live prices from CoinGecko...');
   const symbols = [...basePortfolio.holdings.map(h => h.symbol), 'USDC'];
 
@@ -83,14 +68,27 @@ async function main() {
   }
   console.log();
 
-  // ── Step 2: Build live portfolio ──────────────────────────────────────────
+  // ── Step 3: Patch null entry prices to current market price ──────────────
+  // On-chain data has no purchase history; seed entry price = current price
+  // so PnL starts at 0% rather than dividing by null.
+  if (SOLANA_RPC_URL && WALLET_ADDRESS) {
+    basePortfolio = {
+      ...basePortfolio,
+      holdings: basePortfolio.holdings.map(h => ({
+        ...h,
+        entryPrice: h.entryPrice ?? market[h.symbol]?.price ?? 0,
+      })),
+    };
+  }
+
+  // ── Step 4: Build live portfolio ──────────────────────────────────────────
   const portfolio = buildLivePortfolio(basePortfolio, market);
 
   console.log(`Active mandate: \x1b[33m${mandate.riskTier.toUpperCase()}\x1b[0m`);
   console.log(`Portfolio value: \x1b[32m$${portfolio.totalValueUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}\x1b[0m`);
   console.log(`Holdings: ${portfolio.holdings.map(h => `${h.symbol} (${h.pnlPct >= 0 ? '+' : ''}${h.pnlPct.toFixed(2)}%)`).join(', ')}`);
 
-  // ── Step 3: Run reasoning loop ────────────────────────────────────────────
+  // ── Step 5: Run reasoning loop ────────────────────────────────────────────
   try {
     const result = await reason({
       portfolio,
