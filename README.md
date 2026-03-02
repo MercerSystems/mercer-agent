@@ -102,11 +102,10 @@ src/
 
 ## Status
 
-**v0.1.0** — Reasoning engine and mandate enforcement are live. Wallet integration and on-chain execution (Jupiter) are in active development.
+**v0.1.0** — Reasoning engine, mandate enforcement, and live wallet integration are live. On-chain execution via Jupiter is in active development.
 
 **Roadmap:**
 - [ ] Jupiter swap execution
-- [ ] Live wallet state from RPC
 - [ ] Scheduled runs (cron / event-driven)
 - [ ] Web dashboard
 - [ ] Custom mandate builder
