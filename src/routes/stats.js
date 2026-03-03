@@ -27,16 +27,20 @@ export function recordCycle(durationMs) {
 
 // ─── Route ────────────────────────────────────────────────────────────────────
 
-const router = Router();
-
-router.get('/', (_req, res) => {
-  res.json({
+export function getStats() {
+  return {
     cyclesTotal,
     lastCycleAt,
     serverStartAt,
     uptimePct:    100,
     avgDecisionMs: cyclesTotal > 0 ? Math.round(totalDecisionMs / cyclesTotal) : null,
-  });
+  };
+}
+
+const router = Router();
+
+router.get('/', (_req, res) => {
+  res.json(getStats());
 });
 
 export default router;

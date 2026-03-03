@@ -10,6 +10,13 @@ import { enforceMandate } from './mandate.js';
 
 const MODEL = process.env.MERCER_MODEL ?? 'claude-sonnet-4-6';
 
+// ─── Decision history (last 20 entries, in-memory) ────────────────────────────
+const decisionHistory = [];
+
+export function getRecentDecisions(n = 5) {
+  return decisionHistory.slice(-n);
+}
+
 // Lazy-initialized client (created once per process)
 let _client = null;
 function getClient() {
@@ -87,6 +94,10 @@ export async function reason({ portfolio, market, mandate, trigger = 'scheduled_
 
   // Run mandate enforcement layer
   const { decision, violations, blocked } = enforceMandate(rawDecision, mandate, portfolio);
+
+  // Record in history (cap at 20)
+  decisionHistory.push({ ...decision, timestamp: new Date().toISOString(), blocked });
+  if (decisionHistory.length > 20) decisionHistory.shift();
 
   return { raw, decision, violations, blocked, usage };
 }

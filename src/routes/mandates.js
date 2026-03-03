@@ -20,6 +20,10 @@ function resolveMandate(mandate) {
   return mandate ?? null;
 }
 
+export function getMandates() {
+  return MANDATE_PRESETS;
+}
+
 // GET /mandates
 router.get('/', (_req, res) => {
   res.json(MANDATE_PRESETS);

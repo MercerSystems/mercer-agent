@@ -13,6 +13,7 @@ import portfolioRouter from './routes/portfolio.js';
 import swapRouter      from './routes/swap.js';
 import statsRouter     from './routes/stats.js';
 import executeRouter   from './routes/execute.js';
+import askRouter       from './routes/ask.js';
 
 const PORT = process.env.PORT ?? 3000;
 
@@ -32,6 +33,7 @@ app.use('/portfolio', portfolioRouter);
 app.use('/swap',      swapRouter);
 app.use('/stats',     statsRouter);
 app.use('/execute',   executeRouter);
+app.use('/ask',       askRouter);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
