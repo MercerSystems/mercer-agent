@@ -118,3 +118,4 @@ src/
 
 - Node.js 18+
 - Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
+
