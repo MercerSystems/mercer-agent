@@ -21,7 +21,7 @@
 ## How it works
 
 ```
-Live prices (CoinGecko)
+Live prices (Jupiter Price API)
         ↓
 Portfolio state builder
         ↓
@@ -32,7 +32,7 @@ Mandate enforcement layer
 Approved decision + risk report
 ```
 
-1. **Fetch** — pulls live prices from CoinGecko for every holding
+1. **Fetch** — pulls live prices from Jupiter Price API for every holding
 2. **Reason** — Claude analyzes the portfolio against the active risk mandate and returns a structured decision (hold / rebalance / buy / sell / alert)
 3. **Enforce** — the mandate layer validates every proposed trade: whitelist, position sizing, stop-loss, drawdown halt
 4. **Output** — color-coded terminal report with approved trades, violations, and reasoning
@@ -86,7 +86,7 @@ src/
 │   ├── prompts.js        Claude system prompt + context builder
 │   └── reasoning.js      Anthropic SDK integration + decision parsing
 └── market/
-    └── coingecko.js      Live price fetching via CoinGecko API
+    └── coingecko.js      Live price fetching via Jupiter Price API
 ```
 
 ---
