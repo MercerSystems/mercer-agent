@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Router } from 'express';
-import { fetchMarketData } from '../market/coingecko.js';
+import { fetchMarketData } from '../market/prices.js';
 
 const router = Router();
 

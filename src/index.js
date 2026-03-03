@@ -6,7 +6,7 @@
 import 'dotenv/config';
 import { reason, printDecision } from './agent/reasoning.js';
 import { MANDATE_PRESETS } from './agent/mandate.js';
-import { fetchMarketData } from './market/coingecko.js';
+import { fetchMarketData } from './market/prices.js';
 import { DEFAULT_BASE_PORTFOLIO, buildLivePortfolio } from './agent/portfolio.js';
 import { fetchWalletPortfolio } from './wallet/solana.js';
 

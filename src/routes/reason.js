@@ -6,7 +6,7 @@
 import { Router } from 'express';
 import { reason } from '../agent/reasoning.js';
 import { MANDATE_PRESETS } from '../agent/mandate.js';
-import { fetchMarketData } from '../market/coingecko.js';
+import { fetchMarketData } from '../market/prices.js';
 import { DEFAULT_BASE_PORTFOLIO, buildLivePortfolio } from '../agent/portfolio.js';
 
 const router = Router();

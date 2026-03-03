@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Mercer Systems — market/coingecko.js
+// Mercer Systems — market/prices.js
 // Jupiter Price API v6 — real-time Solana token prices priced in USDC
 // Docs: https://station.jup.ag/docs/apis/price-api
 // ─────────────────────────────────────────────────────────────────────────────

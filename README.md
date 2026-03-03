@@ -86,7 +86,7 @@ src/
 │   ├── prompts.js        Claude system prompt + context builder
 │   └── reasoning.js      Anthropic SDK integration + decision parsing
 └── market/
-    └── coingecko.js      Live price fetching via Jupiter Price API
+    └── prices.js         Live price fetching via Jupiter Price API
 ```
 
 ---
