@@ -96,6 +96,8 @@ src/
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Yes | — | Your Anthropic API key |
+| `SOLANA_RPC_URL` | No | — | Helius (or other) RPC endpoint for live wallet balances |
+| `WALLET_ADDRESS` | No | — | Base58 Solana wallet address to track |
 | `MERCER_MODEL` | No | `claude-sonnet-4-6` | Claude model to use for reasoning |
 
 ---
