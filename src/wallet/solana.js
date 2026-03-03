@@ -34,7 +34,8 @@ export async function fetchWalletPortfolio(walletAddress, rpcUrl) {
       const mint = new PublicKey(MINTS[symbol]);
       const accounts = await connection.getParsedTokenAccountsByOwner(pubkey, { mint });
       if (accounts.value.length === 0) return 0;
-      return accounts.value[0].account.data.parsed.info.tokenAmount.uiAmount ?? 0;
+      const { amount, decimals } = accounts.value[0].account.data.parsed.info.tokenAmount;
+      return Number(amount) / Math.pow(10, decimals);
     })
   );
 
