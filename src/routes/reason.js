@@ -8,6 +8,9 @@ import { reason } from '../agent/reasoning.js';
 import { MANDATE_PRESETS } from '../agent/mandate.js';
 import { fetchMarketData } from '../market/prices.js';
 import { DEFAULT_BASE_PORTFOLIO, buildLivePortfolio } from '../agent/portfolio.js';
+import { fetchWalletPortfolio } from '../wallet/solana.js';
+
+const { SOLANA_RPC_URL, WALLET_ADDRESS } = process.env;
 
 const router = Router();
 
@@ -40,8 +43,20 @@ router.post('/', async (req, res, next) => {
       ));
     }
 
-    // Default portfolio
-    const basePortfolio = portfolioInput ?? DEFAULT_BASE_PORTFOLIO;
+    // Resolve base portfolio: caller-supplied > live wallet > mock fallback
+    let basePortfolio;
+    if (portfolioInput) {
+      basePortfolio = portfolioInput;
+    } else if (SOLANA_RPC_URL && WALLET_ADDRESS) {
+      try {
+        basePortfolio = await fetchWalletPortfolio(WALLET_ADDRESS, SOLANA_RPC_URL);
+      } catch (err) {
+        console.warn('[Mercer] Wallet fetch failed — falling back to mock portfolio.', err.message);
+        basePortfolio = DEFAULT_BASE_PORTFOLIO;
+      }
+    } else {
+      basePortfolio = DEFAULT_BASE_PORTFOLIO;
+    }
 
     // Extract unique symbols from holdings + USDC
     const symbols = [...new Set([...basePortfolio.holdings.map(h => h.symbol), 'USDC'])];
@@ -52,6 +67,17 @@ router.post('/', async (req, res, next) => {
       market = await fetchMarketData(symbols);
     } catch (err) {
       return next(Object.assign(new Error(err.message), { status: 400 }));
+    }
+
+    // Seed null entry prices to current price so PnL starts at 0% for live wallet holdings
+    if (!portfolioInput && SOLANA_RPC_URL && WALLET_ADDRESS) {
+      basePortfolio = {
+        ...basePortfolio,
+        holdings: basePortfolio.holdings.map(h => ({
+          ...h,
+          entryPrice: h.entryPrice ?? market[h.symbol]?.price ?? 0,
+        })),
+      };
     }
 
     // Build enriched portfolio
