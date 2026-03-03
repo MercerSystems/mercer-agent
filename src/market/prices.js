@@ -1,31 +1,31 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Mercer Systems — market/prices.js
-// Jupiter Price API v6 — real-time Solana token prices priced in USDC
-// Docs: https://station.jup.ag/docs/apis/price-api
+// CoinGecko simple/price API — free, no API key required
+// Endpoint: https://api.coingecko.com/api/v3/simple/price
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BASE_URL = 'https://price.jup.ag/v6/price';
+const BASE_URL = 'https://api.coingecko.com/api/v3/simple/price';
 const CACHE_TTL_MS = 60_000;
 
-// Jupiter identifies tokens by their on-chain mint address
-const MINTS = {
-  SOL:  'So11111111111111111111111111111111111111112',
-  USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-  JUP:  'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
-  BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
-  WIF:  'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
-  JTO:  'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL',
-  PYTH: 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3',
+// CoinGecko coin ID for each token symbol
+const COINGECKO_IDS = {
+  SOL:  'solana',
+  USDC: 'usd-coin',
+  JUP:  'jupiter-exchange-solana',
+  BONK: 'bonk',
+  WIF:  'dogwifcoin',
+  JTO:  'jito-governance-token',
+  PYTH: 'pyth-network',
 };
 
 // In-memory cache keyed by sorted symbol list, e.g. "BONK,JUP,SOL,USDC,WIF"
 const cache = new Map();
 
 /**
- * Fetches live market data for the requested token symbols from Jupiter Price API.
+ * Fetches live market data for the requested token symbols from CoinGecko.
  * Results are cached for 60 seconds per unique set of symbols.
  *
- * @param {string[]} symbols - Token symbols (must be in MINTS)
+ * @param {string[]} symbols - Token symbols (must be in COINGECKO_IDS)
  * @returns {Promise<Record<string, {
  *   price: number,
  *   change24h: number | null,
@@ -41,29 +41,44 @@ export async function fetchMarketData(symbols = ['SOL', 'JUP', 'BONK', 'WIF', 'U
     return cached.data;
   }
 
-  const mints = symbols.map((s) => {
-    const mint = MINTS[s];
-    if (!mint) throw new Error(`No mint address mapping for token: ${s}`);
-    return mint;
+  const ids = symbols.map((s) => {
+    const id = COINGECKO_IDS[s];
+    if (!id) throw new Error(`No CoinGecko ID mapping for token: ${s}`);
+    return id;
   });
 
-  const url = `${BASE_URL}?ids=${mints.join(',')}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Jupiter Price API ${res.status}: ${res.statusText}`);
+  const url =
+    `${BASE_URL}` +
+    `?ids=${ids.join(',')}` +
+    `&vs_currencies=usd` +
+    `&include_24hr_change=true` +
+    `&include_24hr_vol=true` +
+    `&include_market_cap=true`;
+
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw new Error(`CoinGecko API network error fetching ${url} — ${err.message}`);
+  }
+
+  if (!res.ok) {
+    throw new Error(`CoinGecko API ${res.status} ${res.statusText} fetching ${url}`);
+  }
 
   const json = await res.json();
 
   const market = {};
   for (const symbol of symbols) {
-    const mint  = MINTS[symbol];
-    const entry = json.data?.[mint];
-    if (!entry) throw new Error(`Jupiter returned no price for ${symbol} (mint: ${mint})`);
+    const id   = COINGECKO_IDS[symbol];
+    const data = json[id];
+    if (!data) throw new Error(`CoinGecko returned no data for ${symbol} (id: ${id})`);
 
     market[symbol] = {
-      price:        entry.price,
-      change24h:    null,  // not provided by Jupiter Price API v6
-      volume24hUsd: null,
-      marketCapUsd: null,
+      price:        data.usd,
+      change24h:    data.usd_24h_change  ?? null,
+      volume24hUsd: data.usd_24h_vol     ?? null,
+      marketCapUsd: data.usd_market_cap  ?? null,
     };
   }
 
