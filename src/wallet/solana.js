@@ -42,9 +42,10 @@ export async function fetchWalletPortfolio(walletAddress, rpcUrl) {
   return {
     walletAddress,
     peakValueUsd: 0,
-    cashUsd: usdcBalance,
+    cashUsd: 0,
     holdings: [
       { symbol: 'SOL',  quantity: solBalance,  entryPrice: null },
+      { symbol: 'USDC', quantity: usdcBalance, entryPrice: null },
       { symbol: 'JUP',  quantity: jupBalance,  entryPrice: null },
       { symbol: 'BONK', quantity: bonkBalance, entryPrice: null },
       { symbol: 'WIF',  quantity: wifBalance,  entryPrice: null },

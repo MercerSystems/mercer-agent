@@ -19,6 +19,8 @@ const COINGECKO_IDS = {
 };
 
 // In-memory cache keyed by sorted symbol list, e.g. "BONK,JUP,SOL,USDC,WIF"
+// Each entry: { data, expiresAt }
+// Stale entries are kept indefinitely so they can be served if CoinGecko rate-limits us.
 const cache = new Map();
 
 /**
@@ -59,10 +61,20 @@ export async function fetchMarketData(symbols = ['SOL', 'JUP', 'BONK', 'WIF', 'U
   try {
     res = await fetch(url);
   } catch (err) {
+    const stale = cache.get(cacheKey);
+    if (stale) {
+      console.warn(`[Mercer] CoinGecko network error — serving stale prices (${err.message})`);
+      return stale.data;
+    }
     throw new Error(`CoinGecko API network error fetching ${url} — ${err.message}`);
   }
 
   if (!res.ok) {
+    const stale = cache.get(cacheKey);
+    if (stale) {
+      console.warn(`[Mercer] CoinGecko ${res.status} ${res.statusText} — serving stale prices`);
+      return stale.data;
+    }
     throw new Error(`CoinGecko API ${res.status} ${res.statusText} fetching ${url}`);
   }
 

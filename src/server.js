@@ -5,9 +5,14 @@
 
 import 'dotenv/config';
 import express from 'express';
-import reasonRouter   from './routes/reason.js';
-import marketRouter   from './routes/market.js';
-import mandatesRouter from './routes/mandates.js';
+import cors from 'cors';
+import reasonRouter    from './routes/reason.js';
+import marketRouter    from './routes/market.js';
+import mandatesRouter  from './routes/mandates.js';
+import portfolioRouter from './routes/portfolio.js';
+import swapRouter      from './routes/swap.js';
+import statsRouter     from './routes/stats.js';
+import executeRouter   from './routes/execute.js';
 
 const PORT = process.env.PORT ?? 3000;
 
@@ -16,11 +21,17 @@ if (!process.env.ANTHROPIC_API_KEY) {
 }
 
 const app = express();
+app.use(cors());
+app.options('*', cors());
 app.use(express.json());
 
-app.use('/reason',   reasonRouter);
-app.use('/market',   marketRouter);
-app.use('/mandates', mandatesRouter);
+app.use('/reason',    reasonRouter);
+app.use('/market',    marketRouter);
+app.use('/mandates',  mandatesRouter);
+app.use('/portfolio', portfolioRouter);
+app.use('/swap',      swapRouter);
+app.use('/stats',     statsRouter);
+app.use('/execute',   executeRouter);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
