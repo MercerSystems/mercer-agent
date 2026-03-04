@@ -41,8 +41,8 @@ Recent decisions: ${JSON.stringify(recentDecisions)}
 Engine stats: ${JSON.stringify(stats)}`;
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 512,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 300,
       system: systemPrompt,
       messages: [{ role: 'user', content: question }],
     });
