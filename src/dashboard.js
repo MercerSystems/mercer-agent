@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Mercer Systems — dashboard.js
 // Terminal dashboard powered by blessed-contrib
-// Auto-refreshes every 120s — connects to Express API on port 3000
+// Auto-refreshes every 900s — connects to Express API on port 3000
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dotenv/config';
@@ -11,7 +11,7 @@ import { fetchWalletPortfolio } from './wallet/solana.js';
 import { DEFAULT_BASE_PORTFOLIO } from './agent/portfolio.js';
 
 const API_BASE = 'http://localhost:3000';
-const REFRESH_MS = 120_000;
+const REFRESH_MS = 900_000;
 const MANDATE_PRESET = process.env.MERCER_MANDATE ?? 'moderate';
 const { SOLANA_RPC_URL, WALLET_ADDRESS } = process.env;
 
