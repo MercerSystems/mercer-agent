@@ -269,18 +269,18 @@ async function doRefresh() {
     const mandates      = await fetchJSON(`${API_BASE}/mandates`);
     const activeMandate = mandates[MANDATE_PRESET];
 
-    // 4. Claude reasoning — triggers Anthropic API call
-    setStatus('{yellow-fg}Awaiting Claude reasoning...{/}');
-    screen.render();
+    // 4. Claude reasoning — disabled (AUTO_EXECUTE=false; re-enable to resume)
+    // setStatus('{yellow-fg}Awaiting Claude reasoning...{/}');
+    // screen.render();
 
-    const result = await fetchJSON(`${API_BASE}/reason`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mandate: MANDATE_PRESET }),
-    });
+    // const result = await fetchJSON(`${API_BASE}/reason`, {
+    //   method: 'POST',
+    //   headers: { 'Content-Type': 'application/json' },
+    //   body: JSON.stringify({ mandate: MANDATE_PRESET }),
+    // });
 
-    updateMandateDisplay(activeMandate, result.violations, result.blocked);
-    updateReasonDisplay(result);
+    // updateMandateDisplay(activeMandate, result.violations, result.blocked);
+    // updateReasonDisplay(result);
 
     lastUpdatedAt = new Date();
     setStatus(`{green-fg}Updated: ${lastUpdatedAt.toLocaleTimeString()}{/}  |  Next refresh in {cyan-fg}30s{/}`);
