@@ -6,7 +6,7 @@
 import { Router } from 'express';
 import { reason } from '../agent/reasoning.js';
 import { MANDATE_PRESETS } from '../agent/mandate.js';
-import { fetchMarketData } from '../market/prices.js';
+import { fetchSolanaMarketMap } from '../market/solana-market.js';
 import { DEFAULT_BASE_PORTFOLIO, buildLivePortfolio } from '../agent/portfolio.js';
 import { fetchWalletPortfolio } from '../wallet/solana.js';
 import { executeDecision } from '../executor.js';
@@ -50,13 +50,7 @@ router.post('/', async (req, res, next) => {
     }
 
     // ── Fetch market data ────────────────────────────────────────────────────
-    const symbols = [...new Set([...basePortfolio.holdings.map(h => h.symbol), 'USDC'])];
-    let market;
-    try {
-      market = await fetchMarketData(symbols);
-    } catch (err) {
-      return next(Object.assign(new Error(err.message), { status: 400 }));
-    }
+    const market = await fetchSolanaMarketMap(150);
 
     // Seed null entry prices for live wallet holdings
     if (SOLANA_RPC_URL && WALLET_ADDRESS) {

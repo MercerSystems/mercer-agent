@@ -9,7 +9,9 @@
     "dev": "node --watch src/index.js",
     "serve": "node src/server.js",
     "dev:serve": "node --watch src/server.js",
-    "dashboard": "node src/dashboard.js"
+    "dashboard": "node src/dashboard.js",
+    "ask": "node src/ask-terminal.js",
+    "watchdog": "bash scripts/watchdog.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

@@ -12,27 +12,48 @@
 export const MANDATE_PRESETS = {
   conservative: {
     riskTier: 'conservative',
-    maxPositionPct: 20,       // No single asset > 20% of portfolio
-    stopLossPct: 10,          // Exit if asset drops 10% from entry
-    maxDrawdownPct: 15,       // Halt trading if portfolio down 15% from peak
-    allowedAssets: ['SOL', 'USDC', 'JTO', 'JITO'],
-    notes: 'Capital preservation priority. Avoid high-volatility meme tokens.',
+    maxPositionPct:   20,
+    stopLossPct:      10,
+    trailingStopPct:  8,
+    takeProfitPct:    20,
+    takeProfitLadder: [
+      { pct: 15, sellFraction: 0.33 },
+      { pct: 25, sellFraction: 0.33 },
+      { pct: 40, sellFraction: 0.34 },
+    ],
+    maxDrawdownPct:   15,
+    minMarketCapUsd:  500_000_000, // Only trade tokens with >$500M market cap
+    notes: 'Capital preservation. Large-cap Solana tokens only — no meme coins.',
   },
   moderate: {
     riskTier: 'moderate',
-    maxPositionPct: 35,
-    stopLossPct: 20,
-    maxDrawdownPct: 25,
-    allowedAssets: ['SOL', 'USDC', 'JTO', 'JITO', 'BONK', 'WIF', 'JUP', 'PYTH'],
-    notes: 'Balanced growth and protection. Allow mid-cap Solana ecosystem tokens.',
+    maxPositionPct:   35,
+    stopLossPct:      20,
+    trailingStopPct:  15,
+    takeProfitPct:    40,
+    takeProfitLadder: [
+      { pct: 30, sellFraction: 0.25 },
+      { pct: 55, sellFraction: 0.25 },
+      { pct: 90, sellFraction: 0.50 },
+    ],
+    maxDrawdownPct:   25,
+    minMarketCapUsd:  50_000_000, // Only trade tokens with >$50M market cap
+    notes: 'Balanced growth. Pick the best opportunities across the Solana ecosystem — evaluate all tokens equally by momentum and market conditions.',
   },
   aggressive: {
     riskTier: 'aggressive',
-    maxPositionPct: 50,
-    stopLossPct: 35,
-    maxDrawdownPct: 40,
-    allowedAssets: ['SOL', 'USDC', 'JTO', 'JITO', 'BONK', 'WIF', 'JUP', 'PYTH', 'MEME', 'BOME', 'POPCAT'],
-    notes: 'High risk/reward. Meme tokens and micro-caps permitted.',
+    maxPositionPct:   50,
+    stopLossPct:      35,
+    trailingStopPct:  25,
+    takeProfitPct:    60,
+    takeProfitLadder: [
+      { pct: 40,  sellFraction: 0.25 },
+      { pct: 75,  sellFraction: 0.25 },
+      { pct: 120, sellFraction: 0.50 },
+    ],
+    maxDrawdownPct:   40,
+    minMarketCapUsd:  5_000_000, // Only trade tokens with >$5M market cap
+    notes: 'High risk/reward. Any liquid Solana token with momentum — pick winners, not favorites.',
   },
 };
 
@@ -45,7 +66,7 @@ export const MANDATE_PRESETS = {
  * @param {object} portfolio - Current portfolio state
  * @returns {{ decision: object, violations: string[], blocked: boolean }}
  */
-export function enforceMandate(decision, mandate, portfolio) {
+export function enforceMandate(decision, mandate, portfolio, market = {}) {
   const violations = [];
   let blocked = false;
 
@@ -74,10 +95,15 @@ export function enforceMandate(decision, mandate, portfolio) {
     const symbol = trade.asset?.toUpperCase();
     let tradeBlocked = false;
 
-    // 2a. Asset whitelist check
-    if (!mandate.allowedAssets.map(a => a.toUpperCase()).includes(symbol)) {
-      violations.push(`BLOCKED trade: ${symbol} is not in the allowed asset list for ${mandate.riskTier} mandate.`);
-      tradeBlocked = true;
+    // 2a. Market cap check — replaces hardcoded whitelist
+    if (mandate.minMarketCapUsd && symbol !== 'USDC') {
+      const cap = market[symbol]?.marketCapUsd;
+      if (cap != null && cap < mandate.minMarketCapUsd) {
+        violations.push(
+          `BLOCKED trade: ${symbol} market cap $${(cap / 1e6).toFixed(1)}M is below the ${mandate.riskTier} minimum of $${(mandate.minMarketCapUsd / 1e6).toFixed(0)}M.`
+        );
+        tradeBlocked = true;
+      }
     }
 
     // 2b. Position size check (only for buys)
@@ -174,4 +200,15 @@ export function scanStopLosses(portfolio, mandate) {
   return portfolio.holdings
     .filter(h => h.pnlPct <= -mandate.stopLossPct)
     .map(h => `${h.symbol}: ${h.pnlPct.toFixed(2)}% (threshold: -${mandate.stopLossPct}%)`);
+}
+
+/**
+ * Scans all holdings for take-profit triggers.
+ * Returns list of triggered messages for holdings where PnL >= takeProfitPct.
+ */
+export function scanTakeProfits(portfolio, mandate) {
+  if (!mandate.takeProfitPct) return [];
+  return portfolio.holdings
+    .filter(h => h.symbol !== 'USDC' && h.pnlPct >= mandate.takeProfitPct)
+    .map(h => `${h.symbol}: +${h.pnlPct.toFixed(2)}% (take-profit at +${mandate.takeProfitPct}%)`);
 }

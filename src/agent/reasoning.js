@@ -5,16 +5,46 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Anthropic from '@anthropic-ai/sdk';
+import { writeFileSync, readFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import { SYSTEM_PROMPT, buildContext } from './prompts.js';
 import { enforceMandate } from './mandate.js';
 
-const MODEL = process.env.MERCER_MODEL ?? 'claude-sonnet-4-6';
+const MODEL         = process.env.MERCER_MODEL ?? 'claude-sonnet-4-6';
+const HISTORY_FILE  = join(process.cwd(), 'data', 'decisions.json');
+const HISTORY_LIMIT = 200;
 
-// ─── Decision history (last 20 entries, in-memory) ────────────────────────────
-const decisionHistory = [];
+// ─── Decision history — persisted to data/decisions.json ─────────────────────
+
+function loadHistory() {
+  try {
+    mkdirSync(join(process.cwd(), 'data'), { recursive: true });
+    return JSON.parse(readFileSync(HISTORY_FILE, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(history) {
+  try {
+    mkdirSync(join(process.cwd(), 'data'), { recursive: true });
+    writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
+  } catch (err) {
+    console.warn('[Mercer] Could not save decision history:', err.message);
+  }
+}
+
+const decisionHistory = loadHistory();
 
 export function getRecentDecisions(n = 5) {
   return decisionHistory.slice(-n);
+}
+
+/** Records a decision made outside the normal reasoning loop (e.g. stop-loss bypass). */
+export function recordDecision(decision, blocked = false) {
+  decisionHistory.push({ ...decision, timestamp: new Date().toISOString(), blocked });
+  if (decisionHistory.length > HISTORY_LIMIT) decisionHistory.shift();
+  saveHistory(decisionHistory);
 }
 
 // Lazy-initialized client (created once per process)
@@ -63,24 +93,26 @@ function parseDecision(raw) {
  *   usage: object
  * }>}
  */
-export async function reason({ portfolio, market, mandate, trigger = 'scheduled_review', history = [] }) {
+export async function reason({ portfolio, market, mandate, trigger = 'scheduled_review', history = [], trailingData = null }) {
   const client = getClient();
 
-  const contextMessage = buildContext({ portfolio, market, mandate, trigger });
+  const contextMessage = buildContext({ portfolio, market, mandate, trigger, trailingData });
 
   const messages = [
     ...history,
     { role: 'user', content: contextMessage },
   ];
 
-  console.log(`\n[Mercer] Reasoning cycle initiated — trigger: ${trigger}`);
+  const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  console.log(`\n[Mercer] ${now} — Reasoning cycle initiated — trigger: ${trigger}`);
   console.log(`[Mercer] Model: ${MODEL}`);
   console.log(`[Mercer] Portfolio value: $${portfolio.totalValueUsd.toLocaleString()}\n`);
 
   const response = await client.messages.create({
-    model: MODEL,
+    model:      MODEL,
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    // Cache the system prompt — saves ~90% on input tokens after first call
+    system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages,
   });
 
@@ -97,7 +129,8 @@ export async function reason({ portfolio, market, mandate, trigger = 'scheduled_
 
   // Record in history (cap at 20)
   decisionHistory.push({ ...decision, timestamp: new Date().toISOString(), blocked });
-  if (decisionHistory.length > 20) decisionHistory.shift();
+  if (decisionHistory.length > HISTORY_LIMIT) decisionHistory.shift();
+  saveHistory(decisionHistory);
 
   return { raw, decision, violations, blocked, usage };
 }

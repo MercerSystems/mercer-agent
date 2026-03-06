@@ -14,6 +14,9 @@ import swapRouter      from './routes/swap.js';
 import statsRouter     from './routes/stats.js';
 import executeRouter   from './routes/execute.js';
 import askRouter       from './routes/ask.js';
+import { startWatchdog }      from './agent/watchdog.js';
+import { warmTokenRegistry } from './market/token-registry.js';
+import { getLastTradeAt }    from './trade-signal.js';
 
 const PORT = process.env.PORT ?? 3000;
 
@@ -35,6 +38,10 @@ app.use('/stats',     statsRouter);
 app.use('/execute',   executeRouter);
 app.use('/ask',       askRouter);
 
+// Lightweight polling endpoint — dashboard uses this to detect new trades
+// and trigger an immediate portfolio refresh without waiting for DATA_REFRESH_MS
+app.get('/events', (_req, res) => res.json({ lastTradeAt: getLastTradeAt() }));
+
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
 app.use((err, _req, res, _next) => {
@@ -42,4 +49,8 @@ app.use((err, _req, res, _next) => {
   res.status(err.status ?? 500).json({ error: err.message });
 });
 
-app.listen(PORT, () => console.log(`[Mercer] API running on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`[Mercer] API running on http://localhost:${PORT}`);
+  warmTokenRegistry();
+  startWatchdog(process.env.MERCER_MANDATE ?? 'moderate');
+});

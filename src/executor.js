@@ -12,33 +12,28 @@
 
 import 'dotenv/config';
 import { createJupiterApiClient } from '@jup-ag/api';
-import { Connection, VersionedTransaction, Keypair } from '@solana/web3.js';
+import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
+import { sendAlert } from './notify.js';
+import { resolveToken } from './market/token-registry.js';
+import { signalTrade } from './trade-signal.js';
 
 // ─── Debug: confirm env is loaded at module evaluation time ───────────────────
 console.log('[Mercer Executor] WALLET_PRIVATE_KEY:', process.env.WALLET_PRIVATE_KEY
   ? 'KEY FOUND: ' + process.env.WALLET_PRIVATE_KEY.substring(0, 10) + '...'
   : 'KEY MISSING');
 
+// ─── Timestamp helper ─────────────────────────────────────────────────────────
+function ts() {
+  return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
 // ─── Safety flag ──────────────────────────────────────────────────────────────
 const DRY_RUN = process.env.DRY_RUN !== 'false';
 
-// ─── Token registry ───────────────────────────────────────────────────────────
-const MINTS = {
-  SOL:  'So11111111111111111111111111111111111111112',
-  USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-  JUP:  'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
-  BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
-  WIF:  'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
-};
-
-const DECIMALS = {
-  SOL:  9,
-  USDC: 6,
-  JUP:  6,
-  BONK: 5,
-  WIF:  6,
-};
+// USDC mint — always needed as the quote currency for all swaps
+const USDC_MINT     = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDC_DECIMALS = 6;
 
 // Actions that produce trades worth executing
 const EXECUTABLE_ACTIONS = new Set(['rebalance', 'adjust', 'buy', 'sell']);
@@ -71,31 +66,38 @@ function loadKeypair() {
 async function executeTrade(trade, market, jupiterApi) {
   const { type, asset, amountUsd } = trade;
 
-  const assetMint = MINTS[asset];
-  if (!assetMint) {
-    throw new Error(`No mint address registered for asset: ${asset}`);
+  // Buying USDC is a no-op — sell proceeds already land in USDC automatically
+  if (asset === 'USDC') {
+    console.log(`[Mercer Executor] Hold USDC — sell proceeds already settled in USDC, no swap needed`);
+    return { ...trade, status: 'skipped', reason: 'USDC proceeds already received from sells' };
   }
 
-  // Buying or selling USDC-for-USDC is a no-op — skip it
-  if (asset === 'USDC') {
-    console.log(`[Mercer Executor] Skipping ${type} USDC — USDC is the quote currency, not a swap target`);
-    return { ...trade, status: 'skipped', reason: 'USDC is the quote currency' };
+  // Resolve mint address dynamically via Jupiter token registry
+  const coingeckoId = market[asset]?.coingeckoId;
+  const tokenInfo   = await resolveToken(asset, coingeckoId);
+  if (!tokenInfo) {
+    const msg = `Cannot resolve mint for ${asset} (coingeckoId: ${coingeckoId ?? 'unknown'}) — not in Jupiter verified list`;
+    console.error(`[Mercer Executor] ${msg}`);
+    await sendAlert(`Warning: Trade skipped — ${msg}`);
+    return { ...trade, status: 'blocked', reason: msg };
   }
+
+  const { mint: assetMint, decimals: assetDecimals } = tokenInfo;
 
   // Convert USD trade size to raw token input amount
   let inputMint, outputMint, rawAmount;
   if (type === 'buy') {
     // Spend USDC to acquire the target asset
-    inputMint  = MINTS.USDC;
+    inputMint  = USDC_MINT;
     outputMint = assetMint;
-    rawAmount  = Math.round(amountUsd * Math.pow(10, DECIMALS.USDC));
+    rawAmount  = Math.round(amountUsd * Math.pow(10, USDC_DECIMALS));
   } else {
     // Sell the asset back to USDC
     const price = market[asset]?.price;
     if (!price) throw new Error(`No market price available for ${asset}`);
     inputMint  = assetMint;
-    outputMint = MINTS.USDC;
-    rawAmount  = Math.round((amountUsd / price) * Math.pow(10, DECIMALS[asset]));
+    outputMint = USDC_MINT;
+    rawAmount  = Math.round((amountUsd / price) * Math.pow(10, assetDecimals));
   }
 
   if (rawAmount <= 0) {
@@ -103,7 +105,7 @@ async function executeTrade(trade, market, jupiterApi) {
   }
 
   // ── MAX_TRADE_USD cap ──────────────────────────────────────────────────────
-  const maxTradeUsd = parseFloat(process.env.MAX_TRADE_USD) || 50;
+  const maxTradeUsd = parseFloat(process.env.MAX_TRADE_USD) || 35;
   if (amountUsd > maxTradeUsd) {
     console.log(`[Mercer Executor] Trade blocked — $${amountUsd} exceeds MAX_TRADE_USD limit of $${maxTradeUsd}`);
     return { ...trade, status: 'blocked', reason: `exceeds MAX_TRADE_USD limit of $${maxTradeUsd}` };
@@ -113,7 +115,7 @@ async function executeTrade(trade, market, jupiterApi) {
   const quoteParams = { inputMint, outputMint, amount: rawAmount, slippageBps: 50 };
   const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${rawAmount}&slippageBps=50`;
 
-  console.log(`[Mercer Executor] Quote request — ${type.toUpperCase()} ${asset}`);
+  console.log(`[Mercer Executor] ${ts()} — Quote request — ${type.toUpperCase()} ${asset}`);
   console.log(`[Mercer Executor]   URL:         ${quoteUrl}`);
   console.log(`[Mercer Executor]   inputMint:   ${inputMint}`);
   console.log(`[Mercer Executor]   outputMint:  ${outputMint}`);
@@ -139,21 +141,63 @@ async function executeTrade(trade, market, jupiterApi) {
   }
 
   console.log(
-    `[Mercer Executor] Quote — ${type.toUpperCase()} ${asset}` +
+    `[Mercer Executor] ${ts()} — Quote — ${type.toUpperCase()} ${asset}` +
     ` | in: ${quote.inAmount} | out: ${quote.outAmount}` +
     ` | price impact: ${quote.priceImpactPct}%`
   );
 
+  // ── Price impact guard ─────────────────────────────────────────────────────
+  const maxImpact   = parseFloat(process.env.MAX_PRICE_IMPACT_PCT) || 2.0;
+  const priceImpact = parseFloat(quote.priceImpactPct ?? 0);
+  if (priceImpact > maxImpact) {
+    const msg = `Price impact ${priceImpact.toFixed(2)}% exceeds ${maxImpact}% limit for ${type.toUpperCase()} ${asset} $${amountUsd} — trade blocked`;
+    console.warn(`[Mercer Executor] BLOCKED — ${msg}`);
+    await sendAlert(`Warning: ${msg}`);
+    return { ...trade, status: 'blocked', reason: msg };
+  }
+
   if (DRY_RUN) {
-    console.log(`[Mercer Executor] DRY_RUN=true — skipping broadcast for ${type} ${asset} $${amountUsd}`);
+    console.log(`[Mercer Executor] ${ts()} — DRY_RUN=true — skipping broadcast for ${type} ${asset} $${amountUsd}`);
     return { ...trade, status: 'dry_run', quote };
   }
 
-  // ── Build swap transaction ─────────────────────────────────────────────────
+  // ── Pre-flight balance checks ──────────────────────────────────────────────
   if (!process.env.SOLANA_RPC_URL) {
     throw new Error('SOLANA_RPC_URL not set in .env — required for live execution.');
   }
+  {
+    const minSolForGas = parseFloat(process.env.MIN_SOL_FOR_GAS) || 0.01;
+    const keypair      = loadKeypair();
+    const connection   = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
 
+    // SOL gas check
+    const lamports   = await connection.getBalance(keypair.publicKey);
+    const solBalance = lamports / 1e9;
+    if (solBalance < minSolForGas) {
+      const msg = `Insufficient SOL for gas: ${solBalance.toFixed(4)} SOL < ${minSolForGas} minimum — trade blocked`;
+      console.error(`[Mercer Executor] ${msg}`);
+      await sendAlert(`Warning: ${msg}`);
+      return { ...trade, status: 'blocked', reason: msg };
+    }
+
+    // USDC balance check for buys — prevents failed on-chain txs when Claude
+    // proposes a buy larger than available cash
+    if (type === 'buy') {
+      const { value: usdcAccounts } = await connection.getParsedTokenAccountsByOwner(
+        keypair.publicKey,
+        { mint: new PublicKey(USDC_MINT) }
+      );
+      const usdcBalance = usdcAccounts[0]?.account.data.parsed.info.tokenAmount.uiAmount ?? 0;
+      if (usdcBalance < amountUsd) {
+        const msg = `Insufficient USDC: $${usdcBalance.toFixed(2)} available < $${amountUsd} required — buy blocked`;
+        console.error(`[Mercer Executor] ${msg}`);
+        await sendAlert(`Warning: ${msg}`);
+        return { ...trade, status: 'blocked', reason: msg };
+      }
+    }
+  }
+
+  // ── Build swap transaction ─────────────────────────────────────────────────
   let swapResult;
   try {
     const keypair = loadKeypair();
@@ -178,11 +222,13 @@ async function executeTrade(trade, market, jupiterApi) {
     });
     await connection.confirmTransaction(txid, 'confirmed');
 
-    console.log(`[Mercer Executor] Confirmed — ${type.toUpperCase()} ${asset} | tx: https://solscan.io/tx/${txid}`);
+    console.log(`[Mercer Executor] ${ts()} — Confirmed — ${type.toUpperCase()} ${asset} | tx: https://solscan.io/tx/${txid}`);
+    signalTrade();
     return { ...trade, status: 'executed', txid };
 
   } catch (err) {
     console.error(`[Mercer Executor] Execution failed for ${type} ${asset}:`, err.message);
+    await sendAlert(`Warning: Execution FAILED — ${type.toUpperCase()} ${asset} $${amountUsd} — ${err.message}`);
     return { ...trade, status: 'failed', error: err.message };
   }
 }

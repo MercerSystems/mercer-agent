@@ -7,16 +7,22 @@
 import 'dotenv/config';
 import blessed from 'blessed';
 import contrib from 'blessed-contrib';
+import { spawn } from 'child_process';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
-const API_BASE       = 'http://localhost:3000';
-const REFRESH_MS     = 900_000;
-const MANDATE_PRESET = process.env.MERCER_MANDATE ?? 'moderate';
+const API_BASE          = 'http://localhost:3000';
+const REFRESH_MS        = 600_000;
+const DATA_REFRESH_MS   = parseInt(process.env.DATA_REFRESH_MS ?? '60000');
+const MANDATE_PRESET    = process.env.MERCER_MANDATE    ?? 'moderate';
+const REASON_THRESHOLD  = parseFloat(process.env.REASON_THRESHOLD ?? '2');
+const COST_PER_CYCLE    = 0.008;
 
 // ─── Logo ─────────────────────────────────────────────────────────────────────
 // Smoothed version — pure box-drawing, no mixed block/line chars on left edge
 
 const LOGO_LINES = [
-  '███╗   ███╗███████╗██████╗  ██████╗███████╗██████╗',
+  '███╗   ███╗███████╗██████╗  ██████╗███████╗██████╗ ',
   '████╗ ████║██╔════╝██╔══██╗██╔════╝██╔════╝██╔══██╗',
   '██╔████╔██║█████╗  ██████╔╝██║     █████╗  ██████╔╝',
   '██║╚██╔╝██║██╔══╝  ██╔══██╗██║     ██╔══╝  ██╔══██╗',
@@ -57,7 +63,7 @@ const tableBox = grid.set(1, 0, 6, 8, blessed.box, {
 });
 
 const solBox = grid.set(1, 8, 3, 4, blessed.box, {
-  label:   ' SOL / USD ',
+  label:   ' Market ',
   tags:    true,
   border:  { type: 'line', fg: 'cyan' },
   padding: { top: 1, left: 2 },
@@ -76,17 +82,19 @@ const pnlChart = grid.set(4, 8, 3, 4, contrib.line, {
 });
 
 const reasonBox = grid.set(7, 0, 4, 12, blessed.box, {
-  label:        ' Latest Claude Decision ',
+  label:        ' Claude Decisions',
   tags:         true,
   keys:         true,
   vi:           true,
-  border:       { type: 'line', fg: 'cyan' },
+  border:       { type: 'line', fg: 'blue' },
   padding:      { top: 0, left: 2 },
   scrollable:   true,
-  alwaysScroll: true,
+  alwaysScroll: false,
+  scrollbar:    { ch: '▐', style: { fg: 'blue', bg: 'black' } },
   content:      'Waiting for first reasoning cycle...',
   style:        { fg: 'white', selected: { bg: 'default' } },
 });
+
 
 const statusBox = grid.set(11, 0, 1, 12, blessed.box, {
   tags:    true,
@@ -127,6 +135,17 @@ function fmtCountdown(secs) {
   return `${secs}s`;
 }
 
+// Load entry prices from disk for P&L column
+function loadEntryPrices() {
+  try { return JSON.parse(readFileSync(join(process.cwd(), 'data', 'entry-prices.json'), 'utf8')); } catch { return {}; }
+}
+
+// Confidence bar — 8 blocks filled proportionally to confidence %
+function confBar(pct) {
+  const n = Math.round(Math.min(100, Math.max(0, pct)) / 100 * 8);
+  return '{green-fg}' + '█'.repeat(n) + '{grey-fg}' + '░'.repeat(8 - n) + '{/}';
+}
+
 // Visible length of a string (strips blessed tags)
 function visLen(s) {
   return s.replace(/\{[^}]+\}/g, '').length;
@@ -139,12 +158,13 @@ function padCol(s, width) {
 
 // ─── Table + watermark renderer ───────────────────────────────────────────────
 
-const COL_W   = [7, 16, 12, 14, 8];
+const COL_W   = [6, 12, 10, 11, 6, 8, 8];
 const COL_SEP = '  ';
-const TABLE_W = COL_W.reduce((a, b) => a + b, 0) + COL_SEP.length * (COL_W.length - 1); // ~65
+const TABLE_W = COL_W.reduce((a, b) => a + b, 0) + COL_SEP.length * (COL_W.length - 1);
 
 function renderTable(portfolio, market = {}) {
   const { holdings, totalValue } = portfolio;
+  const entryPrices = loadEntryPrices();
 
   const divider = COL_W.map(w => '─'.repeat(w)).join(COL_SEP);
 
@@ -153,7 +173,9 @@ function renderTable(portfolio, market = {}) {
     '{cyan-fg}{bold}Balance{/}',
     '{cyan-fg}{bold}Price{/}',
     '{cyan-fg}{bold}Value{/}',
-    '{cyan-fg}{bold}% Port{/}',
+    '{cyan-fg}{bold}%Port{/}',
+    '{cyan-fg}{bold}P&L{/}',
+    '{cyan-fg}{bold}24h{/}',
   ];
 
   const lines = [
@@ -162,17 +184,33 @@ function renderTable(portfolio, market = {}) {
   ];
 
   for (const h of holdings) {
-    const ch    = market[h.token]?.change24h ?? 0;
-    const color = ch >= 0 ? 'green-fg' : 'red-fg';
-    const row   = [
-      '{white-fg}' + h.token + '{/}',
+    const ch       = market[h.token]?.change24h ?? null;
+    const chColor  = ch == null ? 'grey-fg' : ch >= 0 ? 'green-fg' : 'red-fg';
+    const chStr    = ch == null ? 'N/A' : `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%`;
+
+    const ep       = entryPrices[h.token];
+    const pnlPct   = ep && ep > 0 ? ((h.price - ep) / ep) * 100 : null;
+    const pnlColor = pnlPct == null ? 'grey-fg' : pnlPct >= 0 ? 'green-fg' : 'red-fg';
+    const pnlStr   = pnlPct == null ? 'N/A' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+
+    const row = [
+      `{white-fg}${h.token}{/}`,
       '{white-fg}' + fmtQty(h.balance) + '{/}',
       '{white-fg}' + fmtPrice(h.price) + '{/}',
-      `{${color}}${fmtUSD(h.value)}{/}`,
-      '{white-fg}' + ((h.value / totalValue) * 100).toFixed(1) + '%{/}',
+      '{white-fg}' + fmtUSD(h.value) + '{/}',
+      '{grey-fg}' + ((h.value / totalValue) * 100).toFixed(1) + '%{/}',
+      `{${pnlColor}}${pnlStr}{/}`,
+      `{${chColor}}${chStr}{/}`,
     ];
     lines.push(row.map((cell, i) => padCol(cell, COL_W[i])).join(COL_SEP));
   }
+
+  // Session P&L row
+  const sessionPnlUsd = sessionBaseline ? totalValue - sessionBaseline : null;
+  const sessionPnlPct = sessionBaseline ? (sessionPnlUsd / sessionBaseline) * 100 : null;
+  const sPnlColor     = sessionPnlUsd == null ? 'grey-fg' : sessionPnlUsd >= 0 ? 'green-fg' : 'red-fg';
+  const sPnlStr       = sessionPnlUsd == null ? ''
+    : `${sessionPnlUsd >= 0 ? '+' : ''}${fmtUSD(sessionPnlUsd)} (${sessionPnlPct >= 0 ? '+' : ''}${sessionPnlPct.toFixed(2)}%)`;
 
   lines.push(divider);
   lines.push([
@@ -181,7 +219,18 @@ function renderTable(portfolio, market = {}) {
     padCol('',                               COL_W[2]),
     padCol(`{bold}${fmtUSD(totalValue)}{/}`, COL_W[3]),
     padCol('{bold}100%{/}',                  COL_W[4]),
+    padCol('',                               COL_W[5]),
+    padCol('',                               COL_W[6]),
   ].join(COL_SEP));
+
+  if (sPnlStr) {
+    lines.push(
+      padCol('', COL_W[0]) + COL_SEP +
+      padCol('', COL_W[1]) + COL_SEP +
+      padCol('', COL_W[2]) + COL_SEP +
+      padCol(`{${sPnlColor}}${sPnlStr}{/}`, COL_W[3] + COL_SEP.length + COL_W[4])
+    );
+  }
 
   // ── Watermark logo below the data rows ─────────────────────────────────────
   lines.push('');
@@ -197,55 +246,216 @@ function renderTable(portfolio, market = {}) {
   return lines.join('\n');
 }
 
+// ─── Dropdown helper ──────────────────────────────────────────────────────────
+
+// Derived dynamically from live portfolio — updated on each data refresh
+function heldTokens() {
+  if (!lastPortfolio?.holdings) return ['SOL', 'USDC'];
+  return lastPortfolio.holdings.map(h => h.token).filter(Boolean);
+}
+
+// Per-token brand colors (terminal palette)
+const TOKEN_COLORS = {
+  SOL:  'magenta',  // Solana purple
+  JUP:  'green',    // Jupiter green
+  BONK: 'yellow',   // meme/dog energy
+  WIF:  'white',    // neutral
+  USDC: 'blue',     // dollar/stable
+};
+
+let activeDropdown = null;
+
+function showDropdown(items, anchorBox, onSelect) {
+  if (activeDropdown) return;
+
+  const top  = (anchorBox.atop  ?? 1) + 1;
+  const left = (anchorBox.aleft ?? 8) + 1;
+  const w    = Math.max(...items.map(s => s.length)) + 4;
+
+  const list = blessed.list({
+    parent: screen,
+    top,
+    left,
+    width:  w,
+    height: items.length + 2,
+    items:  [...items],
+    keys:   true,
+    vi:     true,
+    border: { type: 'line', fg: 'cyan' },
+    style: {
+      fg:       'white',
+      bg:       'black',
+      border:   { fg: 'cyan' },
+      selected: { fg: 'black', bg: 'cyan', bold: true },
+    },
+  });
+
+  activeDropdown = list;
+  list.focus();
+  screen.render();
+
+  const close = () => {
+    activeDropdown = null;
+    list.destroy();
+    screen.render();
+  };
+
+  list.on('select', (_item, index) => {
+    close();
+    onSelect(items[index], index);
+  });
+
+  list.key(['escape'], close);
+}
+
 // ─── Display updaters ─────────────────────────────────────────────────────────
 
 function updatePortfolioTable(portfolio, market = {}) {
   tableBox.setContent(renderTable(portfolio, market));
 }
 
-function updateSOLPrice(market) {
-  const sol = market.SOL;
-  if (!sol) {
-    solBox.setContent('{red-fg}SOL data unavailable{/}');
+function updateMarketBox(token, market) {
+  // ── All-token ticker (default when token is null) ────────────────────────────
+  if (!token) {
+    solBox.setLabel(' Market ');
+    const lines = [];
+    for (const sym of heldTokens()) {
+      const d = market[sym];
+      if (!d) { lines.push(` {white-fg}${sym.padEnd(5)}{/}  {grey-fg}—{/}`); continue; }
+      const ch     = d.change24h ?? 0;
+      const color  = ch >= 0 ? 'green' : 'red';
+      const arrow  = ch >= 0 ? '▲' : '▼';
+      const chStr  = `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%`;
+      lines.push(
+        ` {white-fg}{bold}${sym.padEnd(5)}{/}` +
+        ` {white-fg}${fmtPrice(d.price).padEnd(12)}{/}` +
+        ` {${color}-fg}${arrow} ${chStr}{/}`
+      );
+    }
+    solBox.setContent(lines.join('\n'));
     return;
   }
-  const ch      = sol.change24h ?? 0;
-  const chColor = ch >= 0 ? 'green-fg' : 'red-fg';
-  const chSign  = ch >= 0 ? '+' : '';
-  const vol     = sol.volume24hUsd ? '$' + (sol.volume24hUsd / 1e9).toFixed(2) + 'B' : 'N/A';
 
+  // ── Single-token detail view ─────────────────────────────────────────────────
+  const data = market[token];
+  if (!data) {
+    solBox.setLabel(` ${token} Market `);
+    solBox.setContent(`{red-fg}${token} data unavailable{/}`);
+    return;
+  }
+
+  const ch1h  = data.change1h  ?? null;
+  const ch24h = data.change24h ?? 0;
+  const ch1hColor  = ch1h  == null ? 'grey-fg' : ch1h  >= 0 ? 'green-fg' : 'red-fg';
+  const ch24hColor = ch24h >= 0 ? 'green-fg' : 'red-fg';
+  const ch1hStr  = ch1h  == null ? 'N/A' : `${ch1h  >= 0 ? '+' : ''}${ch1h.toFixed(2)}%`;
+  const ch24hStr = `${ch24h >= 0 ? '+' : ''}${ch24h.toFixed(2)}%`;
+  const vol  = data.volume24hUsd ? '$' + (data.volume24hUsd / 1e9).toFixed(2) + 'B' : 'N/A';
+  const mcap = data.marketCapUsd ? '$' + (data.marketCapUsd  / 1e9).toFixed(1) + 'B' : 'N/A';
+
+  const movers = Object.entries(market)
+    .filter(([s, d]) => d.change24h != null && s !== token)
+    .sort((a, b) => b[1].change24h - a[1].change24h);
+  const best  = movers[0];
+  const worst = movers[movers.length - 1];
+  const bestLine  = best  ? ` {green-fg}▲ ${best[0]}  ${best[1].change24h >= 0 ? '+' : ''}${best[1].change24h.toFixed(2)}%{/}` : '';
+  const worstLine = worst ? ` {red-fg}▼ ${worst[0]}  ${worst[1].change24h >= 0 ? '+' : ''}${worst[1].change24h.toFixed(2)}%{/}` : '';
+
+  solBox.setLabel(` ${token} Market `);
   solBox.setContent(
-    ` {bold}{white-fg}${fmtPrice(sol.price)}{/}\n\n` +
-    ` {${chColor}}24h  ${chSign}${ch.toFixed(2)}%{/}\n\n` +
-    ` {grey-fg}Vol  ${vol}{/}`
+    ` {white-fg}{bold}${token}  ${fmtPrice(data.price)}{/}\n` +
+    ` {${ch1hColor}}1h  ${ch1hStr}{/}   {${ch24hColor}}24h ${ch24hStr}{/}\n` +
+    ` {grey-fg}Vol ${vol}  MCap ${mcap}{/}\n` +
+    `\n` +
+    `${bestLine}\n` +
+    `${worstLine}\n`
   );
 }
 
-function updatePnlChart(history) {
+function buildChartBounds(pctSeries) {
+  const yMin   = Math.min(...pctSeries);
+  const yMax   = Math.max(...pctSeries);
+  const yRange = yMax - yMin;
+  const pad    = Math.max(0.05, yRange * 0.2);
+  pnlChart.options.minY = parseFloat((yMin - pad).toFixed(4));
+  pnlChart.options.maxY = parseFloat((yMax + pad).toFixed(4));
+}
+
+function updatePnlChart(history, market = {}) {
+  // ── Token price series ───────────────────────────────────────────────────────
+  if (selectedChartSeries !== 'portfolio') {
+    const token    = selectedChartSeries;
+    const priceHist = tokenPriceHistory[token] ?? [];
+    if (priceHist.length < 2) {
+      pnlChart.setLabel(` ${token} Price [c] — awaiting data `);
+      pnlChart.options.minY = -0.1;
+      pnlChart.options.maxY =  0.1;
+      pnlChart.setData([{ title: '', x: [' '], y: [0] }]);
+      return;
+    }
+    const win    = priceHist.slice(-90);
+    const first  = win[0].price;
+    const last   = win[win.length - 1].price;
+    const pct    = ((last - first) / first) * 100;
+    const sign   = pct >= 0 ? '+' : '';
+    const arrow  = pct >= 0 ? '▲' : '▼';
+    const color  = pct >= 0 ? 'green' : 'red';
+    const series = win.map(s => parseFloat(((s.price - first) / first * 100).toFixed(4)));
+    const step   = Math.max(1, Math.floor(win.length / 6));
+    const xs     = win.map((s, i) => (i % step === 0 ? hhmm(s.timestamp) : ' '));
+    buildChartBounds(series);
+    pnlChart.setLabel(` ${arrow} ${fmtPrice(last)}  ${sign}${pct.toFixed(2)}%  ${token} `);
+    pnlChart.setData([{ title: '', x: xs, y: series, style: { line: color } }]);
+    return;
+  }
+
+  // ── Portfolio value series ───────────────────────────────────────────────────
   if (history.length < 2) {
     pnlChart.setLabel(' Portfolio P&L — awaiting data ');
+    pnlChart.options.minY = -0.1;
+    pnlChart.options.maxY =  0.1;
     pnlChart.setData([{ title: '', x: [' '], y: [0] }]);
     return;
   }
 
-  const win    = history.slice(-24);
-  const first  = win[0].totalValueUsd;
-  const last   = win[win.length - 1].totalValueUsd;
-  const pnlUsd = last - first;
-  const pnlPct = (pnlUsd / first) * 100;
-  const sign   = pnlUsd >= 0 ? '+' : '';
+  const win      = history.slice(-chartWindow);
+  const baseline = sessionBaseline ?? win[0].totalValueUsd;
+  const last     = win[win.length - 1].totalValueUsd;
+  const pnlUsd   = last - baseline;
+  const pnlPct   = (pnlUsd / baseline) * 100;
+  const sign     = pnlUsd >= 0 ? '+' : '';
+  const arrow    = pnlUsd >= 0 ? '▲' : '▼';
+  const color    = pnlUsd >= 0 ? 'green' : 'red';
 
-  pnlChart.setLabel(` P&L  ${sign}${fmtUSD(pnlUsd)} (${sign}${pnlPct.toFixed(1)}%) `);
+  // % change series relative to session baseline
+  const pctSeries = win.map(s => parseFloat(((s.totalValueUsd - baseline) / baseline * 100).toFixed(4)));
+  buildChartBounds(pctSeries);
+
+  // X labels: only show every Nth tick to avoid crowding
+  const step = Math.max(1, Math.floor(win.length / 6));
+  const xs   = win.map((s, i) => (i % step === 0 ? hhmm(s.timestamp) : ' '));
+
+  // Biggest mover
+  let leadSymbol = null, leadCh = 0;
+  for (const [sym, data] of Object.entries(market)) {
+    if (data.change24h != null && Math.abs(data.change24h) > Math.abs(leadCh)) {
+      leadSymbol = sym; leadCh = data.change24h;
+    }
+  }
+  const leadStr = leadSymbol ? `  ${leadCh >= 0 ? '▲' : '▼'} ${leadSymbol} ${leadCh >= 0 ? '+' : ''}${leadCh.toFixed(1)}%` : '';
+
+  const winLabel = chartWindow === 60 ? '1m' : chartWindow === 240 ? '4m' : chartWindow === 300 ? 'all' : `${chartWindow}s`;
+  pnlChart.setLabel(` ${arrow} ${fmtUSD(last)}  ${sign}${fmtUSD(pnlUsd)} (${sign}${pnlPct.toFixed(2)}%) vs start${leadStr}  [${winLabel}] `);
   pnlChart.setData([{
-    title: 'Value',
-    x: win.map(s => hhmm(s.timestamp)),
-    y: win.map(s => s.totalValueUsd),
-    style: { line: pnlUsd >= 0 ? 'green' : 'red' },
+    title: '',
+    x: xs,
+    y: pctSeries,
+    style: { line: color },
   }]);
 }
 
-function updateReasonDisplay(result) {
-  const { decision, violations, blocked } = result;
+function updateReasonDisplay(result, triggeredBy = null) {
+  const { decision, violations, blocked, execution, stopLossBypass, takeProfitBypass } = result;
 
   const actionColor = {
     hold:      'yellow-fg',
@@ -255,12 +465,17 @@ function updateReasonDisplay(result) {
     alert:     'magenta-fg',
   }[decision.action] ?? 'white-fg';
 
-  const conf       = ((decision.confidence ?? 0) * 100).toFixed(0);
-  const blockedTag = blocked ? '{red-fg}YES ⛔{/}' : '{green-fg}NO{/}';
+  const conf           = ((decision.confidence ?? 0) * 100).toFixed(0);
+  const bar            = confBar(parseFloat(conf));
+  const blockedTag     = blocked ? '{red-fg}YES ⛔{/}' : '{green-fg}NO{/}';
+  const bypassTag      = stopLossBypass  ? '   {red-fg}{bold}⚡ STOP-LOSS BYPASS{/}'
+                       : takeProfitBypass ? '   {green-fg}{bold}🎯 TAKE-PROFIT BYPASS{/}'
+                       : '';
+  const triggerTag     = triggeredBy ? `   {cyan-fg}Triggered by:{/} {grey-fg}${triggeredBy}{/}` : '';
 
   const lines = [
     `{cyan-fg}Action:{/} {bold}{${actionColor}}${(decision.action ?? '?').toUpperCase()}{/}` +
-      `   {cyan-fg}Confidence:{/} ${conf}%   {cyan-fg}Blocked:{/} ${blockedTag}`,
+      `   {cyan-fg}Confidence:{/} ${bar} ${conf}%   {cyan-fg}Blocked:{/} ${blockedTag}${bypassTag}${triggerTag}`,
     '',
     `{cyan-fg}Rationale:{/} ${decision.rationale ?? 'N/A'}`,
   ];
@@ -289,15 +504,107 @@ function updateReasonDisplay(result) {
     for (const v of violations) lines.push(`  {red-fg}✗ ${v}{/}`);
   }
 
+  // Execution log
+  if (execution) {
+    if (execution.status === 'throttled') {
+      lines.push('', `{grey-fg}Execution throttled — ${execution.secSinceLast}s since last trade (min: ${execution.minIntervalSec}s){/}`);
+    } else if (execution.trades?.length > 0) {
+      lines.push('', '{cyan-fg}Execution Log:{/}');
+      for (const t of execution.trades) {
+        const sc   = t.status === 'executed' ? 'green-fg' : t.status === 'dry_run' ? 'cyan-fg' : 'yellow-fg';
+        const side = t.side ?? t.type ?? '?';
+        const sign = side === 'buy' ? '+' : '−';
+        const amt  = t.amountUsd != null ? fmtUSD(t.amountUsd) : '';
+        lines.push(`  {${sc}}${sign} ${side.toUpperCase()} ${t.asset ?? ''} ${amt}  [{bold}${t.status}{/}{${sc}}]{/}`);
+      }
+    }
+  }
+
+  // Record in local history (cap at 5)
+  localDecisionHistory.push({
+    action:      decision.action ?? '?',
+    confidence:  conf,
+    timestamp:   new Date(),
+    triggeredBy: triggeredBy ?? 'manual',
+  });
+  if (localDecisionHistory.length > 5) localDecisionHistory.shift();
+
+  // Append compact decision history log
+  if (localDecisionHistory.length > 0) {
+    lines.push('', '{cyan-fg}─── Recent Decisions ───────────────────────{/}');
+    for (const entry of [...localDecisionHistory].reverse()) {
+      const ac = {
+        hold: 'yellow-fg', rebalance: 'cyan-fg', buy: 'green-fg', sell: 'red-fg', alert: 'magenta-fg',
+      }[entry.action] ?? 'white-fg';
+      const time = entry.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      lines.push(
+        `  {grey-fg}${time}{/}  {${ac}}{bold}${entry.action.toUpperCase().padEnd(9)}{/}` +
+        `{grey-fg}${entry.confidence}%  ${entry.triggeredBy}{/}`
+      );
+    }
+  }
+
   reasonBox.setContent(lines.join('\n'));
+  reasonBox.setScrollPerc(0);
+
+  // Record executed trades in session trade history
+  if (execution?.trades) {
+    for (const t of execution.trades) {
+      if (t.status === 'executed' || t.status === 'dry_run') {
+        tradeHistory.unshift({
+          time:    new Date(),
+          side:    t.side ?? t.type ?? '?',
+          asset:   t.asset ?? '?',
+          amountUsd: t.amountUsd ?? 0,
+          status:  t.status,
+          txid:    t.txid,
+        });
+      }
+    }
+    if (tradeHistory.length > 20) tradeHistory = tradeHistory.slice(0, 20);
+  }
+
+  // macOS notifications for significant events
+  if (stopLossBypass) {
+    notify('Mercer — Stop-Loss', `Mandatory exit triggered. Check dashboard.`);
+  } else if (takeProfitBypass) {
+    notify('Mercer — Take Profit', `Take-profit target reached. Partial exit executed.`);
+  } else if (execution?.trades?.some(t => t.status === 'executed')) {
+    const summary = execution.trades
+      .filter(t => t.status === 'executed')
+      .map(t => `${t.side?.toUpperCase() ?? '?'} ${t.asset ?? ''} ${fmtUSD(t.amountUsd ?? 0)}`)
+      .join(', ');
+    notify('Mercer — Trade Executed', summary);
+  }
+
+  // Flash decision box border green on executed trades, red on stop-loss
+  const hasExecuted = execution?.trades?.some(t => t.status === 'executed');
+  if (hasExecuted || stopLossBypass || takeProfitBypass) {
+    const flashColor = stopLossBypass ? 'red' : takeProfitBypass ? 'green' : 'green';
+    let flashes = 0;
+    const flashInterval = setInterval(() => {
+      reasonBox.style.border.fg = (flashes % 2 === 0) ? flashColor : 'cyan';
+      screen.render();
+      if (++flashes >= 6) {
+        clearInterval(flashInterval);
+        reasonBox.style.border.fg = 'blue';
+        screen.render();
+      }
+    }, 200);
+  }
 }
 
 // ─── API fetch ────────────────────────────────────────────────────────────────
 
-async function fetchJSON(url, opts = {}) {
-  const res = await fetch(url, opts);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+async function fetchJSON(url, opts = {}, timeoutMs = 15_000) {
+  const fetchPromise = fetch(url, opts).then(async res => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  });
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`Request timed out: ${url}`)), timeoutMs)
+  );
+  return Promise.race([fetchPromise, timeoutPromise]);
 }
 
 // ─── Status helper ────────────────────────────────────────────────────────────
@@ -313,8 +620,12 @@ function setStatus(mandate, violations, blocked, msg) {
     ? `{cyan-fg}${MANDATE_PRESET.toUpperCase()}{/} · max ${mandate.maxPositionPct}% · SL ${mandate.stopLossPct}%`
     : MANDATE_PRESET.toUpperCase();
 
+  const walletTag = walletSource === 'live'
+    ? '{green-fg}◈ LIVE{/}'
+    : '{yellow-fg}◈ MOCK{/}';
+
   statusBox.setContent(
-    ` {cyan-fg}[q]{/} Quit  {cyan-fg}[r]{/} Refresh  |  ${mandateStr}  |  ${violStr}  |  ${msg}`
+    `{grey-fg} [q]{/} Quit {grey-fg}[r]{/} Reason {grey-fg}[p]{/} Portfolio {grey-fg}[a]{/} Ask {grey-fg}[m]{/} Market {grey-fg}[c]{/} Chart {grey-fg}[h]{/} History {grey-fg}[1][4][0]{/} Window  {grey-fg}|{/}  ${walletTag}  ${mandateStr}  {grey-fg}|{/}  ${violStr}  {grey-fg}|{/}  ${msg}`
   );
 }
 
@@ -356,40 +667,30 @@ function showSplash(onDone) {
   screen.render();
 
   let dismissed = false;
-
   const startTransition = () => {
     if (dismissed) return;
     dismissed = true;
 
-    // Slide + fade simultaneously — 28 frames × 55ms ≈ 1.5s total
-    // No resize: width/height stay fixed so logo never clips
-    const FRAMES = 28;
-    const DELAY  = 55;
-    const fadeAt = 14; // frame at which fade starts (halfway through slide)
+    const FRAMES     = 28;
+    const DELAY      = 55;
+    const fadeAt     = 14;
     const fadeColors = ['cyan','cyan','blue','blue','grey','grey','grey','black','black','black','black','black','black','black'];
-
     let frame = 0;
     let fi    = 0;
 
     const tick = setInterval(() => {
       const t    = Math.min(frame / (FRAMES - 1), 1);
       const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-
-      // Slide only — no width/height change
       splash.top  = lerp(startTop,  endTop,  ease);
       splash.left = lerp(startLeft, endLeft, ease);
-
-      // Fade starts halfway through
       if (frame >= fadeAt) {
         const col = fadeColors[Math.min(fi, fadeColors.length - 1)];
         splash.style.fg     = col;
         splash.style.border = { fg: col };
         fi++;
       }
-
       screen.render();
       frame++;
-
       if (frame >= FRAMES) {
         clearInterval(tick);
         splash.destroy();
@@ -399,76 +700,489 @@ function showSplash(onDone) {
     }, DELAY);
   };
 
-  screen.once('keypress', startTransition);
   setTimeout(startTransition, 3500);
 }
 
 // ─── Refresh cycle ────────────────────────────────────────────────────────────
 
-let isRefreshing   = false;
-let lastUpdatedAt  = null;
-let nextRefreshAt  = null;
-let lastMandate    = null;
-let lastViolations = [];
-let lastBlocked    = false;
+let isRefreshing         = false;
+let isDataRefreshing     = false;
 
-async function doRefresh() {
-  if (isRefreshing) return;
-  isRefreshing  = true;
-  nextRefreshAt = Date.now() + REFRESH_MS;
-
-  setStatus(lastMandate, lastViolations, lastBlocked, '{yellow-fg}Fetching...{/}');
+// ─── Portfolio spinner ────────────────────────────────────────────────────────
+const SPINNER_FRAMES = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+let spinnerFrame  = 0;
+let spinnerActive = false;
+setInterval(() => {
+  const active = isRefreshing || isDataRefreshing;
+  if (!active) {
+    if (spinnerActive) {
+      spinnerActive = false;
+      tableBox.setLabel(' Portfolio Holdings ');
+      reasonBox.setLabel(' Claude Decisions');
+      screen.render();
+    }
+    return;
+  }
+  spinnerActive = true;
+  spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
+  const spin = SPINNER_FRAMES[spinnerFrame];
+  tableBox.setLabel(` Portfolio Holdings  {cyan-fg}${spin}{/} `);
+  reasonBox.setLabel(isRefreshing
+    ? ` Claude Decisions {cyan-fg}${spin} reasoning{/} `
+    : ` Claude Decisions {cyan-fg}${spin}{/} `);
   screen.render();
+}, 100);
+let lastUpdatedAt        = null;
+let nextRefreshAt        = null;
+let lastMandate          = null;
+let lastViolations       = [];
+let lastBlocked          = false;
+let lastMarketSnapshot   = null;
+let sessionCycles        = 0;
+let localDecisionHistory = [];
+let liveHistory          = [];   // in-memory chart data, appended every data refresh
+let lastPortfolio        = null; // last fetched portfolio, reused for chart ticks
+let lastMaxMovement      = { symbol: null, pct: 0 };
+let walletSource         = 'mock';   // 'live' | 'mock'
+let adaptiveThreshold    = REASON_THRESHOLD;
+let tradeHistory         = [];       // recent executed trades
+let selectedMarketToken  = null;     // null = all-token ticker, string = detail view
+let selectedChartSeries  = 'portfolio'; // 'portfolio' | token symbol
+const tokenPriceHistory  = {};       // token → [{timestamp, price}]
+let sessionBaseline      = null;     // first portfolio value this session — P&L anchor
+let chartWindow          = 90;       // number of history points to show in chart
+
+// ── Load last decision from disk so the box isn't blank on first open ─────────
+function loadLastDecision() {
+  try {
+    const raw  = readFileSync(join(process.cwd(), 'data', 'decisions.json'), 'utf8');
+    const hist = JSON.parse(raw);
+    if (!hist.length) return;
+    // Seed localDecisionHistory from last 5 persisted entries
+    const last5 = hist.slice(-5);
+    for (const d of last5) {
+      localDecisionHistory.push({
+        action:      d.action ?? 'hold',
+        confidence:  ((d.confidence ?? 0) * 100).toFixed(0),
+        timestamp:   new Date(d.timestamp ?? Date.now()),
+        triggeredBy: 'persisted',
+      });
+    }
+    // Show the most recent decision in the box immediately
+    const last = hist[hist.length - 1];
+    if (last) {
+      const ts = new Date(last.timestamp).toLocaleString();
+      const ac = { hold:'yellow-fg', rebalance:'cyan-fg', buy:'green-fg', sell:'red-fg', alert:'magenta-fg' }[last.action] ?? 'white-fg';
+      reasonBox.setContent(
+        `{grey-fg}Last saved decision (${ts}):{/}\n\n` +
+        `{cyan-fg}Action:{/} {bold}{${ac}}${(last.action ?? '?').toUpperCase()}{/}   ` +
+        `{cyan-fg}Confidence:{/} ${((last.confidence ?? 0) * 100).toFixed(0)}%\n\n` +
+        `{cyan-fg}Rationale:{/} ${last.rationale ?? 'N/A'}\n\n` +
+        `{grey-fg}Waiting for live reasoning cycle...{/}`
+      );
+      reasonBox.setScrollPerc(0);
+    }
+  } catch {
+    // No history file yet — that's fine
+  }
+}
+
+// Compute a volatility-adjusted threshold from current 24h market changes.
+// Set to ~1/3 of the average absolute 24h move, clamped between 0.5% and 4%.
+function computeAdaptiveThreshold(market) {
+  const changes = Object.values(market)
+    .map(d => Math.abs(d.change24h ?? 0))
+    .filter(v => v > 0);
+  if (changes.length === 0) return REASON_THRESHOLD;
+  const avg = changes.reduce((s, v) => s + v, 0) / changes.length;
+  return Math.max(0.5, Math.min(4, avg * 0.35));
+}
+
+function getMovementInfo(current) {
+  if (!lastMarketSnapshot) return { moved: true, triggerDesc: 'startup', maxSymbol: null, maxPct: 0 };
+
+  // ── Inter-cycle price movement check ────────────────────────────────────────
+  let maxPct = 0;
+  let maxSymbol = null;
+  for (const [symbol, data] of Object.entries(current)) {
+    const prev = lastMarketSnapshot[symbol];
+    if (!prev) { maxPct = adaptiveThreshold; maxSymbol = symbol; continue; }
+    const pct = Math.abs((data.price - prev.price) / prev.price) * 100;
+    if (pct > maxPct) { maxPct = pct; maxSymbol = symbol; }
+  }
+
+  // ── Force-trigger on alarming 24h moves (>40% of stop-loss threshold) ───────
+  // e.g. moderate mandate: stopLossPct=20 → trigger if any token down >8% in 24h
+  const stopLossPct = lastMandate?.stopLossPct ?? 20;
+  const dangerPct   = stopLossPct * 0.4;
+  let forceTrigger  = false;
+  let forceSymbol   = null;
+  let forcePct      = 0;
+  for (const [symbol, data] of Object.entries(current)) {
+    const abs24h = Math.abs(data.change24h ?? 0);
+    if (abs24h >= dangerPct && abs24h > forcePct) {
+      forceTrigger = true;
+      forceSymbol  = symbol;
+      forcePct     = abs24h;
+    }
+  }
+
+  const moved = maxPct >= adaptiveThreshold || forceTrigger;
+  let triggerDesc = null;
+  if (forceTrigger && (!maxSymbol || forcePct > maxPct)) {
+    const dir = (current[forceSymbol]?.change24h ?? 0) >= 0 ? '+' : '-';
+    triggerDesc = `${forceSymbol} 24h ${dir}${forcePct.toFixed(1)}% (danger)`;
+  } else if (moved && maxSymbol && lastMarketSnapshot[maxSymbol]) {
+    const dir = current[maxSymbol].price >= lastMarketSnapshot[maxSymbol].price ? '+' : '-';
+    triggerDesc = `${maxSymbol} ${dir}${maxPct.toFixed(1)}%`;
+  }
+  return { moved, triggerDesc, maxSymbol: forceSymbol ?? maxSymbol, maxPct: Math.max(maxPct, forcePct) };
+}
+
+// Lightweight data refresh — updates prices + portfolio without calling Claude
+async function doDataRefresh() {
+  if (isRefreshing || isDataRefreshing) return;
+  isDataRefreshing = true;
 
   try {
     const portfolio = await fetchJSON(`${API_BASE}/portfolio`);
     const market    = await fetchJSON(`${API_BASE}/market`);
 
+    walletSource       = portfolio.source ?? 'mock';
+    lastPortfolio      = portfolio;
+    lastMarketSnapshot = market;
     updatePortfolioTable(portfolio, market);
-    updateSOLPrice(market);
-    screen.render();
+    updateMarketBox(selectedMarketToken, market);
 
     const mandates = await fetchJSON(`${API_BASE}/mandates`);
     lastMandate    = mandates[MANDATE_PRESET];
 
-    const history  = await fetchJSON(`${API_BASE}/portfolio/history`);
-    updatePnlChart(history);
-    screen.render();
+    if (liveHistory.length === 0) {
+      const h = await fetchJSON(`${API_BASE}/portfolio/history`);
+      liveHistory = h.slice(-50);
+    }
+    liveHistory.push({ timestamp: new Date().toISOString(), totalValueUsd: portfolio.totalValue });
+    if (liveHistory.length > 120) liveHistory = liveHistory.slice(-120);
+    updatePnlChart(liveHistory, market);
 
     lastUpdatedAt = new Date();
+    const secsLeft = nextRefreshAt ? Math.max(0, Math.round((nextRefreshAt - Date.now()) / 1000)) : Math.round(REFRESH_MS / 1000);
+    const costStr  = `{grey-fg}~$${(sessionCycles * COST_PER_CYCLE).toFixed(3)} (${sessionCycles} cycle${sessionCycles !== 1 ? 's' : ''}){/}`;
+    const movStr   = lastMaxMovement.symbol ? `  {grey-fg}${lastMaxMovement.symbol} ${lastMaxMovement.pct.toFixed(1)}%/${adaptiveThreshold.toFixed(1)}%{/}` : '';
     setStatus(
       lastMandate, lastViolations, lastBlocked,
-      `{green-fg}Updated: ${lastUpdatedAt.toLocaleTimeString()}{/}  Next in {cyan-fg}${fmtCountdown(Math.round(REFRESH_MS / 1000))}{/}`
+      `{green-fg}Updated: ${lastUpdatedAt.toLocaleTimeString()}{/}  ${costStr}${movStr}  Next reason in {cyan-fg}${fmtCountdown(secsLeft)}{/}`
     );
   } catch (err) {
     const msg = err.message.replace(/[{}]/g, '');
     setStatus(lastMandate, lastViolations, lastBlocked, `{red-fg}Error: ${msg}{/}`);
   } finally {
-    isRefreshing = false;
+    isDataRefreshing = false;
     screen.render();
   }
 }
 
-// Countdown tick
+// Full refresh — data + reasoning cycle (runs every REFRESH_MS)
+// force=true bypasses the movement threshold (used for manual [r] key presses)
+async function doRefresh(force = false) {
+  if (isRefreshing) return;
+  isRefreshing     = true;
+  isDataRefreshing = true; // block fast refresh while full cycle runs
+  nextRefreshAt    = Date.now() + REFRESH_MS;
+
+  try {
+    setStatus(lastMandate, lastViolations, lastBlocked, '{yellow-fg}Fetching...{/}');
+    screen.render();
+    const portfolio = await fetchJSON(`${API_BASE}/portfolio`);
+    const market    = await fetchJSON(`${API_BASE}/market`);
+
+    walletSource      = portfolio.source ?? 'mock';
+    lastPortfolio     = portfolio;
+    adaptiveThreshold = computeAdaptiveThreshold(market);
+    updatePortfolioTable(portfolio, market);
+    updateMarketBox(selectedMarketToken, market);
+    screen.render();
+
+    const mandates = await fetchJSON(`${API_BASE}/mandates`);
+    lastMandate    = mandates[MANDATE_PRESET];
+
+    if (liveHistory.length === 0) {
+      const h = await fetchJSON(`${API_BASE}/portfolio/history`);
+      liveHistory = h.slice(-50);
+    }
+    liveHistory.push({ timestamp: new Date().toISOString(), totalValueUsd: portfolio.totalValue });
+    if (liveHistory.length > 120) liveHistory = liveHistory.slice(-120);
+    updatePnlChart(liveHistory, market);
+    screen.render();
+
+    const { moved, triggerDesc, maxSymbol, maxPct } = getMovementInfo(market);
+    lastMarketSnapshot = market;
+    lastMaxMovement    = { symbol: maxSymbol, pct: maxPct };
+
+    if (moved || force) {
+      setStatus(lastMandate, lastViolations, lastBlocked, '{yellow-fg}Running reasoning cycle...{/}');
+      screen.render();
+
+      try {
+        const reasonResult = await fetchJSON(`${API_BASE}/reason`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ mandate: MANDATE_PRESET }),
+        }, 120_000);
+        lastViolations = reasonResult.violations ?? [];
+        lastBlocked    = reasonResult.blocked    ?? false;
+        sessionCycles++;
+        updateReasonDisplay(reasonResult, triggerDesc);
+      } catch (reasonErr) {
+        const msg = reasonErr.message.replace(/[{}]/g, '');
+        reasonBox.setContent(`{red-fg}Reasoning failed: ${msg}\nWill retry next cycle.{/}`);
+        reasonBox.setScrollPerc(0);
+        setStatus(lastMandate, lastViolations, lastBlocked, `{red-fg}Reason error: ${msg}{/}`);
+      }
+      screen.render();
+    }
+
+    lastUpdatedAt = new Date();
+    const costStr  = `{grey-fg}~$${(sessionCycles * COST_PER_CYCLE).toFixed(3)} (${sessionCycles} cycle${sessionCycles !== 1 ? 's' : ''}){/}`;
+    const movStr   = maxSymbol ? `  {grey-fg}${maxSymbol} ${maxPct.toFixed(1)}%/${adaptiveThreshold.toFixed(1)}%{/}` : '';
+    const skipNote = (moved || force) ? '' : `  {grey-fg}· skipped (no movement >${adaptiveThreshold.toFixed(1)}%){/}`;
+    setStatus(
+      lastMandate, lastViolations, lastBlocked,
+      `{green-fg}Updated: ${lastUpdatedAt.toLocaleTimeString()}{/}  ${costStr}${movStr}${skipNote}  Next reason in {cyan-fg}${fmtCountdown(Math.round(REFRESH_MS / 1000))}{/}`
+    );
+  } catch (err) {
+    const msg = err.message.replace(/[{}]/g, '');
+    setStatus(lastMandate, lastViolations, lastBlocked, `{red-fg}Error: ${msg}{/}`);
+    reasonBox.setContent(`{red-fg}Data fetch failed: ${msg}\nCheck that the server is running on port 3000.{/}`);
+    reasonBox.setScrollPerc(0);
+  } finally {
+    isRefreshing     = false;
+    isDataRefreshing = false;
+    screen.render();
+  }
+}
+
+// Countdown tick — updates "Next reason in" every second
 setInterval(() => {
-  if (isRefreshing || !nextRefreshAt || !lastUpdatedAt) return;
+  if (confirmingQuit || isRefreshing || isDataRefreshing || !nextRefreshAt || !lastUpdatedAt) return;
   const secsLeft = Math.max(0, Math.round((nextRefreshAt - Date.now()) / 1000));
+  const costStr  = `{grey-fg}~$${(sessionCycles * COST_PER_CYCLE).toFixed(3)} (${sessionCycles} cycle${sessionCycles !== 1 ? 's' : ''}){/}`;
+  const movStr   = lastMaxMovement.symbol ? `  {grey-fg}${lastMaxMovement.symbol} ${lastMaxMovement.pct.toFixed(1)}%/${adaptiveThreshold.toFixed(1)}%{/}` : '';
   setStatus(
     lastMandate, lastViolations, lastBlocked,
-    `{green-fg}Updated: ${lastUpdatedAt.toLocaleTimeString()}{/}  Next in {cyan-fg}${fmtCountdown(secsLeft)}{/}`
+    `{green-fg}Updated: ${lastUpdatedAt.toLocaleTimeString()}{/}  ${costStr}${movStr}  Next reason in {cyan-fg}${fmtCountdown(secsLeft)}{/}`
   );
   screen.render();
 }, 1_000);
 
+// ─── Ask Mercer — opens in a new terminal window ─────────────────────────────
+
+function openAskTerminal() {
+  const script = `tell application "Terminal"
+    do script "cd '${process.cwd()}' && npm run ask"
+    activate
+  end tell`;
+  spawn('osascript', ['-e', script], { detached: true }).unref();
+}
+
+// ─── macOS notifications ──────────────────────────────────────────────────────
+
+function notify(title, msg) {
+  const safe = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const script = `display notification "${safe(msg)}" with title "${safe(title)}"`;
+  spawn('osascript', ['-e', script], { detached: true }).unref();
+}
+
+// ─── Trade history overlay ────────────────────────────────────────────────────
+
+const tradeHistBox = blessed.box({
+  parent:  screen,
+  top:     'center',
+  left:    'center',
+  width:   62,
+  height:  22,
+  hidden:  true,
+  tags:    true,
+  border:  { type: 'line', fg: 'cyan' },
+  label:   ' Trade History [h] ',
+  padding: { top: 0, left: 2 },
+  style:   { fg: 'white', bg: 'black', border: { fg: 'cyan' } },
+});
+
+let tradeHistVisible = false;
+
+function toggleTradeHistory() {
+  tradeHistVisible = !tradeHistVisible;
+  if (tradeHistVisible) {
+    if (tradeHistory.length === 0) {
+      tradeHistBox.setContent('{grey-fg}No trades this session.{/}');
+    } else {
+      const lines = ['{cyan-fg}{bold}Time   Side  Asset       Amount        Status{/}',
+                     '{cyan-fg}──────────────────────────────────────────────────{/}'];
+      for (const t of tradeHistory) {
+        const time = t.time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const sc   = t.side === 'buy' ? 'green-fg' : 'red-fg';
+        const sign = t.side === 'buy' ? '+' : '−';
+        lines.push(
+          `{grey-fg}${time}{/}  {${sc}}${sign} ${t.side.toUpperCase().padEnd(4)}  ${(t.asset ?? '?').padEnd(6)}  ${fmtUSD(t.amountUsd ?? 0).padEnd(12)}  ${t.status}{/}`
+        );
+      }
+      tradeHistBox.setContent(lines.join('\n'));
+    }
+    tradeHistBox.show();
+    tradeHistBox.setFront();
+  } else {
+    tradeHistBox.hide();
+  }
+  screen.render();
+}
+
+// ─── Quit confirmation ────────────────────────────────────────────────────────
+
+let confirmingQuit = false;
+function confirmQuit() {
+  if (confirmingQuit) return;
+  confirmingQuit = true;
+
+  let secsLeft = 5;
+  const restore = () => {
+    confirmingQuit = false;
+    clearInterval(countdown);
+    setStatus(lastMandate, lastViolations, lastBlocked, lastUpdatedAt
+      ? `{green-fg}Updated: ${lastUpdatedAt.toLocaleTimeString()}{/}`
+      : 'Ready');
+    screen.render();
+  };
+
+  const showPrompt = () => {
+    statusBox.setContent(` {red-fg}Quit Mercer?{/}  {cyan-fg}[y]{/} Yes   {cyan-fg}[n]{/} No  {grey-fg}(${secsLeft}s){/}`);
+    screen.render();
+  };
+
+  showPrompt();
+
+  const countdown = setInterval(() => {
+    secsLeft--;
+    if (secsLeft <= 0) { restore(); return; }
+    showPrompt();
+  }, 1000);
+
+  screen.once('keypress', (ch) => {
+    if (ch === 'y' || ch === 'Y') { screen.destroy(); process.exit(0); }
+    restore();
+  });
+}
+
 // ─── Key bindings ─────────────────────────────────────────────────────────────
 
-screen.key(['q', 'C-c'], () => { screen.destroy(); process.exit(0); });
-screen.key(['r'], doRefresh);
+screen.key(['q', 'C-c'],  () => { confirmQuit(); });
+screen.key(['r'],          () => { doRefresh(true); });
+screen.key(['p'],          () => { doDataRefresh(); });
+screen.key(['a'],          () => { openAskTerminal(); });
+screen.key(['up'],         () => { reasonBox.scroll(-1); screen.render(); });
+screen.key(['down'],       () => { reasonBox.scroll(1);  screen.render(); });
+screen.key(['pageup'],     () => { reasonBox.scroll(-5); screen.render(); });
+screen.key(['pagedown'],   () => { reasonBox.scroll(5);  screen.render(); });
+
+screen.key(['h'], () => { toggleTradeHistory(); });
+
+screen.key(['1'], () => {
+  chartWindow = 60;
+  updatePnlChart(liveHistory, lastMarketSnapshot ?? {});
+  screen.render();
+});
+screen.key(['4'], () => {
+  chartWindow = 240;
+  updatePnlChart(liveHistory, lastMarketSnapshot ?? {});
+  screen.render();
+});
+screen.key(['0'], () => {
+  chartWindow = 300;
+  updatePnlChart(liveHistory, lastMarketSnapshot ?? {});
+  screen.render();
+});
+
+screen.key(['m'], () => {
+  if (activeDropdown) {
+    activeDropdown.destroy();
+    activeDropdown = null;
+    screen.render();
+    return;
+  }
+  if (!lastMarketSnapshot) return;
+  showDropdown(['All Tokens', ...heldTokens()], solBox, (choice) => {
+    selectedMarketToken = choice === 'All Tokens' ? null : choice;
+    updateMarketBox(selectedMarketToken, lastMarketSnapshot);
+    screen.render();
+  });
+});
+
+screen.key(['c'], () => {
+  if (activeDropdown) {
+    activeDropdown.destroy();
+    activeDropdown = null;
+    screen.render();
+    return;
+  }
+  showDropdown(['Portfolio', ...heldTokens()], pnlChart, (choice) => {
+    selectedChartSeries = choice === 'Portfolio' ? 'portfolio' : choice;
+    updatePnlChart(liveHistory, lastMarketSnapshot ?? {});
+    screen.render();
+  });
+});
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
 screen.render();
+async function doChartRefresh() {
+  if (!lastPortfolio) return;
+  try {
+    const market = await fetchJSON(`${API_BASE}/market`);
+
+    // Track per-token price history for individual token charts
+    const now = new Date().toISOString();
+    for (const [sym, data] of Object.entries(market)) {
+      if (!tokenPriceHistory[sym]) tokenPriceHistory[sym] = [];
+      tokenPriceHistory[sym].push({ timestamp: now, price: data.price });
+      if (tokenPriceHistory[sym].length > 300) tokenPriceHistory[sym] = tokenPriceHistory[sym].slice(-300);
+    }
+
+    if (liveHistory.length === 0) {
+      try {
+        const h = await fetchJSON(`${API_BASE}/portfolio/history`);
+        liveHistory = h.slice(-60);
+      } catch { /* no history yet */ }
+    }
+    const total = lastPortfolio.holdings.reduce((sum, h) => {
+      const price = market[h.token]?.price ?? h.price ?? 0;
+      return sum + h.balance * price;
+    }, 0);
+    liveHistory.push({ timestamp: now, totalValueUsd: total });
+    if (!sessionBaseline && total > 0) sessionBaseline = total;
+    if (liveHistory.length > 300) liveHistory = liveHistory.slice(-300);
+    updatePnlChart(liveHistory, market);
+    screen.render();
+  } catch { /* silent */ }
+}
+
+// Trade-signal poller — triggers an immediate portfolio refresh when executor
+// confirms a new on-chain trade, so new holdings appear within 5s.
+let _lastSeenTradeAt = null;
+async function pollTradeSignal() {
+  try {
+    const { lastTradeAt } = await fetchJSON(`${API_BASE}/events`);
+    if (lastTradeAt && lastTradeAt !== _lastSeenTradeAt) {
+      _lastSeenTradeAt = lastTradeAt;
+      doDataRefresh();
+    }
+  } catch { /* server may not be up yet */ }
+}
+
 showSplash(() => {
-  doRefresh();
+  loadLastDecision();
   setInterval(doRefresh, REFRESH_MS);
+  setInterval(doDataRefresh, DATA_REFRESH_MS);
+  setInterval(doChartRefresh, 1_000);
+  setInterval(pollTradeSignal, 5_000);
+  doRefresh(true);
 });

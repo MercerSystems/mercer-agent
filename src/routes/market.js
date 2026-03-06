@@ -4,26 +4,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Router } from 'express';
-import { fetchMarketData } from '../market/prices.js';
+import { fetchSolanaMarketMap } from '../market/solana-market.js';
 
 const router = Router();
 
-const DEFAULT_SYMBOLS = ['SOL', 'JUP', 'BONK', 'WIF', 'USDC', 'JTO', 'PYTH'];
-
 router.get('/', async (req, res, next) => {
   try {
-    const symbols = req.query.symbols
-      ? req.query.symbols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
-      : DEFAULT_SYMBOLS;
+    // Returns the full ecosystem map (served from cache, no extra CoinGecko call).
+    // If ?symbols= is provided, filters the response to those symbols only.
+    const market = await fetchSolanaMarketMap(150);
 
-    let market;
-    try {
-      market = await fetchMarketData(symbols);
-    } catch (err) {
-      return next(Object.assign(new Error(err.message), { status: 400 }));
-    }
+    const symbolFilter = req.query.symbols
+      ? new Set(req.query.symbols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean))
+      : null;
 
-    res.json(market);
+    const result = symbolFilter
+      ? Object.fromEntries(Object.entries(market).filter(([s]) => symbolFilter.has(s)))
+      : market;
+
+    res.json(result);
   } catch (err) {
     next(err);
   }

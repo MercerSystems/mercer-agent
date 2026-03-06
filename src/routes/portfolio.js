@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { fetchWalletPortfolio } from '../wallet/solana.js';
-import { fetchMarketData } from '../market/prices.js';
+import { fetchSolanaMarketMap } from '../market/solana-market.js';
 import { DEFAULT_BASE_PORTFOLIO } from '../agent/portfolio.js';
 import { recordSnapshot, getHistory } from '../history.js';
 
@@ -15,9 +15,11 @@ const { SOLANA_RPC_URL, WALLET_ADDRESS } = process.env;
 
 export async function getPortfolio() {
   let basePortfolio;
+  let source = 'mock';
   if (SOLANA_RPC_URL && WALLET_ADDRESS) {
     try {
       basePortfolio = await fetchWalletPortfolio(WALLET_ADDRESS, SOLANA_RPC_URL);
+      source = 'live';
     } catch (err) {
       console.warn('[Mercer] Wallet fetch failed — falling back to mock portfolio.', err.message);
       basePortfolio = DEFAULT_BASE_PORTFOLIO;
@@ -26,8 +28,7 @@ export async function getPortfolio() {
     basePortfolio = DEFAULT_BASE_PORTFOLIO;
   }
 
-  const symbols = [...new Set([...basePortfolio.holdings.map(h => h.symbol), 'USDC'])];
-  const market = await fetchMarketData(symbols);
+  const market = await fetchSolanaMarketMap(150);
 
   const holdings = basePortfolio.holdings.map(h => {
     const price = market[h.symbol]?.price ?? 0;
@@ -39,7 +40,7 @@ export async function getPortfolio() {
   const totalValue    = holdingsValue + (basePortfolio.cashUsd ?? 0);
 
   recordSnapshot(totalValue);
-  return { totalValue, change24h: null, holdings };
+  return { totalValue, change24h: null, holdings, source };
 }
 
 // GET /portfolio
