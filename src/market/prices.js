@@ -75,6 +75,10 @@ export async function fetchMarketData(symbols = ['SOL', 'JUP', 'BONK', 'WIF', 'U
       console.warn(`[Mercer] CoinGecko ${res.status} ${res.statusText} — serving stale prices`);
       return stale.data;
     }
+    if (res.status === 429) {
+      console.error('[Mercer] CoinGecko rate limited (429) — no stale cache available, returning empty prices');
+      return {};
+    }
     throw new Error(`CoinGecko API ${res.status} ${res.statusText} fetching ${url}`);
   }
 
