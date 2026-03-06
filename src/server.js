@@ -16,7 +16,7 @@ import executeRouter   from './routes/execute.js';
 import askRouter       from './routes/ask.js';
 import { startWatchdog }      from './agent/watchdog.js';
 import { warmTokenRegistry } from './market/token-registry.js';
-import { getLastTradeAt }    from './trade-signal.js';
+import { getLastTradeAt, consumeEarlyReason } from './trade-signal.js';
 
 const PORT = process.env.PORT ?? 3000;
 
@@ -40,7 +40,7 @@ app.use('/ask',       askRouter);
 
 // Lightweight polling endpoint — dashboard uses this to detect new trades
 // and trigger an immediate portfolio refresh without waiting for DATA_REFRESH_MS
-app.get('/events', (_req, res) => res.json({ lastTradeAt: getLastTradeAt() }));
+app.get('/events', (_req, res) => res.json({ lastTradeAt: getLastTradeAt(), earlyReason: consumeEarlyReason() }));
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 

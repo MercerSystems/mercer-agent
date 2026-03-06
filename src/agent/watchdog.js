@@ -21,9 +21,13 @@ import { scanStopLosses, enforceMandate, MANDATE_PRESETS } from './mandate.js';
 import { recordDecision }                from './reasoning.js';
 import { executeDecision }               from '../executor.js';
 import { sendAlert, stopLossAlertText }  from '../notify.js';
+import { signalEarlyReason }             from '../trade-signal.js';
+import { recordStopOut }                 from './stop-cooldown.js';
 
-const WATCHDOG_INTERVAL_MS = parseInt(process.env.WATCHDOG_INTERVAL_MS, 10) || 30_000;
-const ALERT_1H_DROP_PCT    = parseFloat(process.env.ALERT_1H_DROP_PCT)    || 5.0;
+const WATCHDOG_INTERVAL_MS  = parseInt(process.env.WATCHDOG_INTERVAL_MS, 10) || 30_000;
+const ALERT_1H_DROP_PCT     = parseFloat(process.env.ALERT_1H_DROP_PCT)    || 5.0;
+const MOMENTUM_BUY_1H_PCT   = parseFloat(process.env.MOMENTUM_BUY_1H_PCT)  || 10.0;
+const MOMENTUM_BUY_CD_MS    = 2 * 60 * 60 * 1000; // 2h between triggers for same symbol
 
 // Per-symbol cooldown — prevents re-firing the same trigger within 15 minutes
 const COOLDOWN_MS   = 15 * 60 * 1000;
@@ -110,7 +114,8 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
         const execution = await executeDecision(decision, market);
         syms.forEach(s => {
           markTriggered(s, 'stopLoss');
-          trailingData = clearSymbolState(trailingData, s); // reset HWM + ladder after full exit
+          trailingData = clearSymbolState(trailingData, s);
+          recordStopOut(s); // block re-entry for 4h
         });
 
         const failed = execution?.trades?.filter(t => t.status === 'failed') ?? [];
@@ -156,6 +161,7 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
           syms.forEach(s => {
             markTriggered(s, 'trailingStop');
             trailingData = clearSymbolState(trailingData, s);
+            recordStopOut(s); // block re-entry for 4h
           });
 
           const failed = execution?.trades?.filter(t => t.status === 'failed') ?? [];
@@ -200,7 +206,31 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
         }
       }
 
-      // ── 4. 1-hour momentum alert ─────────────────────────────────────────────
+      // ── 4. Momentum buy trigger — breakout in an unowned token ───────────────
+      // Scans all 150 ecosystem tokens for strong 1h moves Mercer doesn't hold.
+      // Fires an early reasoning cycle so Claude can evaluate the breakout immediately
+      // rather than waiting up to 10 minutes for the next scheduled cycle.
+      const heldSymbols = new Set(livePortfolio.holdings.map(h => h.symbol));
+      for (const [symbol, data] of Object.entries(market)) {
+        if (heldSymbols.has(symbol) || symbol === 'USDC') continue;
+        if ((data.change1h ?? 0) < MOMENTUM_BUY_1H_PCT) continue;
+        // Volume and market cap gates
+        if (mandate.minVolume24hUsd  && (data.volume24hUsd  ?? 0) < mandate.minVolume24hUsd)  continue;
+        if (mandate.minMarketCapUsd  && (data.marketCapUsd  ?? 0) < mandate.minMarketCapUsd)  continue;
+
+        // Per-symbol 2h cooldown to avoid hammering Claude on the same breakout
+        const cdKey = `${symbol}:momentumBuy`;
+        const lastMs = lastTriggered.get(cdKey) ?? 0;
+        if ((Date.now() - lastMs) < MOMENTUM_BUY_CD_MS) continue;
+
+        lastTriggered.set(cdKey, Date.now());
+        console.log(`[Mercer Watchdog] Momentum breakout: ${symbol} +${data.change1h.toFixed(2)}% in 1h — firing early reasoning cycle`);
+        await sendAlert(`Momentum breakout: ${symbol} +${data.change1h.toFixed(2)}% in 1h (vol: $${((data.volume24hUsd ?? 0) / 1e6).toFixed(1)}M) — triggering early review`);
+        signalEarlyReason();
+        break; // one trigger per watchdog tick is enough
+      }
+
+      // ── 5. 1-hour momentum alert ─────────────────────────────────────────────
       for (const h of livePortfolio.holdings) {
         if (h.symbol === 'USDC') continue;
         const change1h = market[h.symbol]?.change1h;

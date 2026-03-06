@@ -15,6 +15,7 @@ import { recordCycle } from './stats.js';
 import { executeDecision } from '../executor.js';
 import { recordSnapshot } from '../history.js';
 import { sendAlert, stopLossAlertText, takeProfitAlertText, tradeAlertText } from '../notify.js';
+import { getActiveCooldowns } from '../agent/stop-cooldown.js';
 
 const { SOLANA_RPC_URL, WALLET_ADDRESS } = process.env;
 
@@ -270,11 +271,12 @@ router.post('/', async (req, res, next) => {
     // Run reasoning loop
     const cycleStart = Date.now();
     const { decision, violations, blocked, usage } = await reason({
-      portfolio: livePortfolio,
+      portfolio:      livePortfolio,
       market,
       mandate,
       trigger,
       trailingData,
+      stopCooldowns:  getActiveCooldowns(),
     });
     recordCycle(Date.now() - cycleStart);
 

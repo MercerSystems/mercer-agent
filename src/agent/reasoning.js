@@ -93,10 +93,10 @@ function parseDecision(raw) {
  *   usage: object
  * }>}
  */
-export async function reason({ portfolio, market, mandate, trigger = 'scheduled_review', history = [], trailingData = null }) {
+export async function reason({ portfolio, market, mandate, trigger = 'scheduled_review', history = [], trailingData = null, stopCooldowns = [] }) {
   const client = getClient();
 
-  const contextMessage = buildContext({ portfolio, market, mandate, trigger, trailingData });
+  const contextMessage = buildContext({ portfolio, market, mandate, trigger, trailingData, stopCooldowns });
 
   const messages = [
     ...history,
@@ -124,8 +124,22 @@ export async function reason({ portfolio, market, mandate, trigger = 'scheduled_
   // Parse structured decision from Claude's response
   const rawDecision = parseDecision(raw);
 
-  // Run mandate enforcement layer
-  const { decision, violations, blocked } = enforceMandate(rawDecision, mandate, portfolio);
+  // Confidence-scaled position sizing — scale buy amounts proportionally to Claude's confidence.
+  // Formula: amount * (0.5 + 0.5 * confidence) — high confidence gets full size, low gets 50-75%.
+  // This makes Mercer bet bigger when it's sure and smaller when uncertain.
+  const confidence = rawDecision.confidence ?? 1.0;
+  const scaledDecision = confidence < 1.0 ? {
+    ...rawDecision,
+    trades: (rawDecision.trades ?? []).map(t => {
+      if (t.type !== 'buy') return t;
+      const scale  = 0.5 + 0.5 * confidence;
+      const scaled = parseFloat((t.amountUsd * scale).toFixed(2));
+      return { ...t, amountUsd: scaled, reason: `${t.reason} [scaled to ${(scale * 100).toFixed(0)}% for ${(confidence * 100).toFixed(0)}% confidence]` };
+    }),
+  } : rawDecision;
+
+  // Run mandate enforcement layer with full market data
+  const { decision, violations, blocked } = enforceMandate(scaledDecision, mandate, portfolio, market ?? {});
 
   // Record in history (cap at 20)
   decisionHistory.push({ ...decision, timestamp: new Date().toISOString(), blocked });

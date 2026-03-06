@@ -22,7 +22,9 @@ export const MANDATE_PRESETS = {
       { pct: 40, sellFraction: 0.34 },
     ],
     maxDrawdownPct:   15,
+    minCashPct:       25,          // Always keep ≥25% of portfolio as USDC dry powder
     minMarketCapUsd:  500_000_000, // Only trade tokens with >$500M market cap
+    minVolume24hUsd:  10_000_000,  // Only trade tokens with >$10M daily volume
     notes: 'Capital preservation. Large-cap Solana tokens only — no meme coins.',
   },
   moderate: {
@@ -37,7 +39,9 @@ export const MANDATE_PRESETS = {
       { pct: 90, sellFraction: 0.50 },
     ],
     maxDrawdownPct:   25,
+    minCashPct:       15,         // Always keep ≥15% of portfolio as USDC dry powder
     minMarketCapUsd:  50_000_000, // Only trade tokens with >$50M market cap
+    minVolume24hUsd:  5_000_000,  // Only trade tokens with >$5M daily volume
     notes: 'Balanced growth. Pick the best opportunities across the Solana ecosystem — evaluate all tokens equally by momentum and market conditions.',
   },
   aggressive: {
@@ -52,10 +56,14 @@ export const MANDATE_PRESETS = {
       { pct: 120, sellFraction: 0.50 },
     ],
     maxDrawdownPct:   40,
+    minCashPct:       10,        // Always keep ≥10% of portfolio as USDC dry powder
     minMarketCapUsd:  5_000_000, // Only trade tokens with >$5M market cap
+    minVolume24hUsd:  1_000_000, // Only trade tokens with >$1M daily volume
     notes: 'High risk/reward. Any liquid Solana token with momentum — pick winners, not favorites.',
   },
 };
+
+import { isInStopCooldown } from './stop-cooldown.js';
 
 /**
  * Checks a Claude-generated decision against the active mandate.
@@ -95,7 +103,7 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
     const symbol = trade.asset?.toUpperCase();
     let tradeBlocked = false;
 
-    // 2a. Market cap check — replaces hardcoded whitelist
+    // 2a. Market cap check
     if (mandate.minMarketCapUsd && symbol !== 'USDC') {
       const cap = market[symbol]?.marketCapUsd;
       if (cap != null && cap < mandate.minMarketCapUsd) {
@@ -106,7 +114,46 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
       }
     }
 
-    // 2b. Position size check (only for buys)
+    // 2b. Volume floor check (buys only) — prevents buying illiquid tokens
+    if (!tradeBlocked && trade.type === 'buy' && mandate.minVolume24hUsd && symbol !== 'USDC') {
+      const vol = market[symbol]?.volume24hUsd;
+      if (vol != null && vol < mandate.minVolume24hUsd) {
+        violations.push(
+          `BLOCKED buy: ${symbol} 24h volume $${(vol / 1e6).toFixed(1)}M below ${(mandate.minVolume24hUsd / 1e6).toFixed(0)}M minimum.`
+        );
+        tradeBlocked = true;
+      }
+    }
+
+    // 2c. Stop-loss re-entry cooldown — prevents buying back a recently stopped-out token
+    if (!tradeBlocked && trade.type === 'buy' && symbol !== 'USDC') {
+      if (isInStopCooldown(symbol)) {
+        violations.push(
+          `BLOCKED buy: ${symbol} is in stop-loss re-entry cooldown — too soon to re-enter after recent stop-out.`
+        );
+        tradeBlocked = true;
+      }
+    }
+
+    // 2d. Cash floor check — ensure minCashPct is preserved after the buy
+    if (!tradeBlocked && trade.type === 'buy' && mandate.minCashPct) {
+      const cashFloor    = (mandate.minCashPct / 100) * portfolio.totalValueUsd;
+      const availableCash = (portfolio.cashUsd ?? 0) - cashFloor;
+      if (availableCash <= 0) {
+        violations.push(
+          `BLOCKED buy: USDC cash $${portfolio.cashUsd?.toFixed(2)} is at or below the ${mandate.minCashPct}% cash floor ($${cashFloor.toFixed(2)}) — preserving dry powder.`
+        );
+        tradeBlocked = true;
+      } else if (trade.amountUsd > availableCash) {
+        violations.push(
+          `TRIMMED buy: ${symbol} reduced from $${trade.amountUsd} to $${availableCash.toFixed(2)} to preserve ${mandate.minCashPct}% cash floor.`
+        );
+        trade.amountUsd = parseFloat(availableCash.toFixed(2));
+        trade.reason   += ` [trimmed to preserve cash floor]`;
+      }
+    }
+
+    // 2f. Position size check (only for buys)
     if (!tradeBlocked && trade.type === 'buy') {
       const holdingAfterBuy = (portfolio.holdings.find(h => h.symbol === symbol)?.valueUsd ?? 0) + trade.amountUsd;
       const newAllocationPct = (holdingAfterBuy / portfolio.totalValueUsd) * 100;
@@ -130,7 +177,7 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
       }
     }
 
-    // 2c. Stop-loss trigger check (auto-sell if PnL below threshold)
+    // 2g. Stop-loss trigger check (auto-sell if PnL below threshold)
     if (!tradeBlocked) {
       const holding = portfolio.holdings.find(h => h.symbol === symbol);
       if (holding && holding.pnlPct <= -mandate.stopLossPct) {

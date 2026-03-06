@@ -67,7 +67,7 @@ Never recommend trades that violate the active mandate.`;
  * @param {string} [params.trigger]  - What initiated this reasoning cycle
  * @returns {string} Formatted context string for the user message
  */
-export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_review', trailingData = null }) {
+export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_review', trailingData = null, stopCooldowns = [] }) {
   const portfolioLines = portfolio.holdings
     .map(h => {
       const pct    = ((h.valueUsd / portfolio.totalValueUsd) * 100).toFixed(1);
@@ -128,12 +128,14 @@ ${marketLines}
 ## Active Mandate
 Risk Tier:       ${mandate.riskTier}
 Max Position:    ${mandate.maxPositionPct}%
+Min Cash (USDC): ${mandate.minCashPct ?? 0}% of portfolio must stay as dry powder (enforced — buys trimmed/blocked to preserve this)
 Stop-Loss:       ${mandate.stopLossPct}% from entry (watchdog auto-executes)
 Trailing Stop:   ${mandate.trailingStopPct ?? 'not set'}% from peak price (watchdog auto-executes)
 Profit Ladder:   ${mandate.takeProfitLadder?.map((r, i) => `rung ${i + 1}: sell ${(r.sellFraction * 100).toFixed(0)}% at +${r.pct}%`).join(', ') ?? 'not set'} (watchdog auto-executes)
 Max Drawdown:    ${mandate.maxDrawdownPct}%
 Min Market Cap:  $${mandate.minMarketCapUsd ? (mandate.minMarketCapUsd / 1e6).toFixed(0) + 'M' : 'none'} (tokens below this are blocked)
+Min Volume:      $${mandate.minVolume24hUsd ? (mandate.minVolume24hUsd / 1e6).toFixed(0) + 'M' : 'none'}/day (illiquid tokens blocked for buys)
 ${mandate.notes ? `Notes: ${mandate.notes}` : ''}
-
+${stopCooldowns.length > 0 ? `\n## Stop-Loss Re-Entry Cooldowns (DO NOT BUY THESE)\n${stopCooldowns.map(c => `  - ${c.symbol}: blocked for ${c.minsRemaining} more minutes after recent stop-out`).join('\n')}` : ''}
 Analyze this state and return your decision as JSON.`;
 }

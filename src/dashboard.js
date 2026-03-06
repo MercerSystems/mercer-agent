@@ -1170,8 +1170,11 @@ async function doChartRefresh() {
 let _lastSeenTradeAt = null;
 async function pollTradeSignal() {
   try {
-    const { lastTradeAt } = await fetchJSON(`${API_BASE}/events`);
-    if (lastTradeAt && lastTradeAt !== _lastSeenTradeAt) {
+    const { lastTradeAt, earlyReason } = await fetchJSON(`${API_BASE}/events`);
+    if (earlyReason) {
+      // Momentum breakout detected — fire a full reasoning cycle immediately
+      doRefresh(true);
+    } else if (lastTradeAt && lastTradeAt !== _lastSeenTradeAt) {
       _lastSeenTradeAt = lastTradeAt;
       doDataRefresh();
     }
