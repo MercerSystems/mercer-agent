@@ -4,3 +4,4 @@ node_modules/
 .env
 .env.save
 *.zip
+data/

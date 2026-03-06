@@ -7,6 +7,7 @@ import { Router } from 'express';
 import { fetchWalletPortfolio } from '../wallet/solana.js';
 import { fetchMarketData } from '../market/prices.js';
 import { DEFAULT_BASE_PORTFOLIO } from '../agent/portfolio.js';
+import { recordSnapshot, getHistory } from '../history.js';
 
 const router = Router();
 
@@ -37,6 +38,7 @@ export async function getPortfolio() {
   const holdingsValue = holdings.reduce((sum, h) => sum + h.value, 0);
   const totalValue    = holdingsValue + (basePortfolio.cashUsd ?? 0);
 
+  recordSnapshot(totalValue);
   return { totalValue, change24h: null, holdings };
 }
 
@@ -47,6 +49,11 @@ router.get('/', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// GET /portfolio/history
+router.get('/history', (_req, res) => {
+  res.json(getHistory());
 });
 
 export default router;

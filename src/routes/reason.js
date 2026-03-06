@@ -11,6 +11,7 @@ import { DEFAULT_BASE_PORTFOLIO, buildLivePortfolio } from '../agent/portfolio.j
 import { fetchWalletPortfolio } from '../wallet/solana.js';
 import { recordCycle } from './stats.js';
 import { executeDecision } from '../executor.js';
+import { recordSnapshot } from '../history.js';
 
 const { SOLANA_RPC_URL, WALLET_ADDRESS } = process.env;
 
@@ -87,6 +88,7 @@ router.post('/', async (req, res, next) => {
 
     // Build enriched portfolio
     const livePortfolio = buildLivePortfolio(basePortfolio, market);
+    recordSnapshot(livePortfolio.totalValueUsd);
 
     // Run reasoning loop
     const cycleStart = Date.now();
