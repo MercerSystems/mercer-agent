@@ -128,12 +128,17 @@ router.post('/', async (req, res, next) => {
       console.warn(`[Mercer] Stop-loss bypass triggered: ${triggeredStopLosses.join('; ')}`);
 
       const stopLossTrades = livePortfolio.holdings
-        .filter(h => h.pnlPct <= -mandate.stopLossPct)
+        .filter(h => {
+          const cap        = market[h.symbol]?.marketCapUsd ?? Infinity;
+          const isMicroCap = mandate.microCapThresholdUsd && cap < mandate.microCapThresholdUsd;
+          const stopPct    = isMicroCap && mandate.microCapStopLossPct ? mandate.microCapStopLossPct : mandate.stopLossPct;
+          return h.pnlPct <= -stopPct;
+        })
         .map(h => ({
           type:      'sell',
           asset:     h.symbol,
           amountUsd: h.valueUsd,
-          reason:    `Mandatory stop-loss exit: ${h.pnlPct.toFixed(2)}% PnL breached -${mandate.stopLossPct}% threshold`,
+          reason:    `Mandatory stop-loss exit: ${h.pnlPct.toFixed(2)}% PnL breached threshold`,
         }));
 
       const rawDecision = {

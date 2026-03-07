@@ -233,7 +233,10 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
 
   // ── 3. Stop-loss scan: check all holdings, not just proposed trades ─────────
   for (const holding of portfolio.holdings) {
-    if (holding.pnlPct <= -mandate.stopLossPct) {
+    const cap3       = market[holding.symbol]?.marketCapUsd ?? Infinity;
+    const isMicro3   = mandate.microCapThresholdUsd && cap3 < mandate.microCapThresholdUsd;
+    const stopPct3   = isMicro3 && mandate.microCapStopLossPct ? mandate.microCapStopLossPct : mandate.stopLossPct;
+    if (holding.pnlPct <= -stopPct3) {
       const alreadyHandled = approvedTrades.some(
         t => t.asset === holding.symbol && t.type === 'sell'
       );
