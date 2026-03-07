@@ -290,7 +290,7 @@ router.post('/', async (req, res, next) => {
     if (!blocked) {
       const autoExecute      = process.env.AUTO_EXECUTE === 'true';
       const minIntervalSec   = parseInt(process.env.MIN_CYCLE_INTERVAL, 10) || 300;
-      const minConfidence    = parseFloat(process.env.MIN_CONFIDENCE) || 0.65;
+      const minConfidence    = parseFloat(process.env.MIN_CONFIDENCE) || 0.68;
       const secSinceLast     = lastExecutionAt ? (Date.now() - lastExecutionAt) / 1000 : Infinity;
       const throttled        = autoExecute && secSinceLast < minIntervalSec;
       const lowConfidence    = (decision.confidence ?? 1) < minConfidence;
