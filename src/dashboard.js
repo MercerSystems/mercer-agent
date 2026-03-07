@@ -454,6 +454,15 @@ function updatePnlChart(history, market = {}) {
   }]);
 }
 
+// Strip blessed markup tags to get visual character width
+function stripTags(s) { return s.replace(/\{[^}]+\}/g, ''); }
+
+// Pad a tagged string to a visual column width
+function padCol(s, width) {
+  const pad = Math.max(0, width - stripTags(s).length);
+  return s + ' '.repeat(pad);
+}
+
 function updateReasonDisplay(result, triggeredBy = null) {
   const { decision, violations, blocked, execution, stopLossBypass, takeProfitBypass } = result;
 
@@ -464,79 +473,65 @@ function updateReasonDisplay(result, triggeredBy = null) {
   const conf        = ((decision.confidence ?? 0) * 100).toFixed(0);
   const bar         = confBar(parseFloat(conf));
 
-  // Build inline status tags for header
-  const execTrades  = execution?.trades ?? [];
-  const nDone       = execTrades.filter(t => t.status === 'executed').length;
-  const nDry        = execTrades.filter(t => t.status === 'dry_run').length;
-  const nFail       = execTrades.filter(t => t.status === 'failed' || t.status === 'blocked').length;
+  const execTrades = execution?.trades ?? [];
+  const nDone      = execTrades.filter(t => t.status === 'executed').length;
+  const nDry       = execTrades.filter(t => t.status === 'dry_run').length;
+  const nFail      = execTrades.filter(t => t.status === 'failed' || t.status === 'blocked').length;
+
   const execSummary = execTrades.length > 0
-    ? (nDone  > 0 ? `  {green-fg}✓ ${nDone} on-chain{/}` : '') +
-      (nDry   > 0 ? `  {cyan-fg}~ ${nDry} dry run{/}` : '') +
-      (nFail  > 0 ? `  {red-fg}✗ ${nFail} failed{/}` : '')
-    : execution?.status === 'throttled'    ? `  {white-fg}⏸ throttled{/}`
-    : execution?.status === 'skipped_low_confidence' ? `  {white-fg}⏸ low confidence{/}`
+    ? (nDone > 0 ? `  {green-fg}✓ ${nDone} on-chain{/}` : '') +
+      (nDry  > 0 ? `  {cyan-fg}~ ${nDry} dry run{/}` : '') +
+      (nFail > 0 ? `  {red-fg}✗ ${nFail} failed{/}` : '')
+    : execution?.status === 'throttled'             ? '  ⏸ throttled'
+    : execution?.status === 'skipped_low_confidence' ? '  ⏸ low confidence'
     : '';
 
-  const bypassTag = stopLossBypass  ? `  {red-fg}⚡ STOP-LOSS{/}`
-                  : takeProfitBypass ? `  {green-fg}✓ TAKE-PROFIT{/}`
+  const bypassTag = stopLossBypass  ? '  {red-fg}⚡ STOP-LOSS{/}'
+                  : takeProfitBypass ? '  {green-fg}✓ TAKE-PROFIT{/}'
                   : '';
-  const trigTag   = triggeredBy ? `  {white-fg}↳ ${triggeredBy}{/}` : '';
+  const trigTag   = triggeredBy ? `  ↳ ${triggeredBy}` : '';
 
-  const lines = [];
+  // ── Build LEFT column lines ───────────────────────────────────────────────
+  const L = [];
+  const LW = 88; // left column visual width (separator at col 90)
 
-  // ── Line 1: ACTION  bar  conf%  exec-summary  bypass  trigger ────────────
-  lines.push(
+  // Header
+  L.push(
     `{bold}{${actionColor}}${(decision.action ?? '?').toUpperCase()}{/}` +
     `  ${bar} {bold}${conf}%{/}` +
     (blocked ? '  {red-fg}⛔ BLOCKED{/}' : '') +
     bypassTag + execSummary + trigTag
   );
+  L.push('─'.repeat(LW));
 
-  // ── Line 2: separator ─────────────────────────────────────────────────────
-  lines.push('{white-fg}─────────────────────────────────────────────{/}');
+  // Rationale clipped to LW
+  const rat = decision.rationale ?? 'N/A';
+  L.push(rat.length > LW ? rat.slice(0, LW - 1) + '…' : rat);
+  L.push('');
 
-  // ── Rationale: single line, clipped ──────────────────────────────────────
-  const rat = (decision.rationale ?? 'N/A');
-  lines.push(rat.length > 74 ? rat.slice(0, 72) + '…' : rat);
-
-  // ── Trade table: unified proposed + execution status ─────────────────────
-  // Prefer execution.trades (have status); fall back to decision.trades (proposed)
+  // Trade table
   const tradesToShow = execTrades.length > 0 ? execTrades : (decision.trades ?? []);
   if (tradesToShow.length > 0) {
-    lines.push('');
     for (const t of tradesToShow) {
-      const side    = (t.type ?? '?').toUpperCase();
-      const asset   = (t.asset ?? '').padEnd(9);
-      const amt     = t.amountUsd != null ? fmtUSD(t.amountUsd).padEnd(8) : '        ';
-      const sign    = (t.type === 'buy') ? '+' : '−';
-
-      let icon, color, statusLabel;
-      if (t.status === 'executed') {
-        icon = '✓'; color = 'green-fg'; statusLabel = 'on-chain';
-      } else if (t.status === 'dry_run') {
-        icon = '~'; color = 'cyan-fg';  statusLabel = 'dry run';
-      } else if (t.status === 'blocked') {
-        icon = '✗'; color = 'red-fg';   statusLabel = t.reason ? t.reason.slice(0, 32) : 'blocked';
-      } else if (t.status === 'failed') {
-        icon = '⚠'; color = 'red-fg';   statusLabel = 'FAILED';
-      } else if (t.status === 'skipped') {
-        icon = '—'; color = 'white-fg'; statusLabel = 'skipped';
-      } else {
-        // proposed (no status yet)
-        icon = '·'; color = t.type === 'buy' ? 'green-fg' : 'red-fg'; statusLabel = 'proposed';
-      }
-
-      lines.push(
-        `  {${color}}{bold}${icon}{/} {${color}}${sign} ${side.padEnd(5)} ${asset} ${amt}{/}` +
-        `{white-fg}${statusLabel}{/}`
-      );
+      const side = (t.type ?? '?').toUpperCase();
+      const sign = t.type === 'buy' ? '+' : '−';
+      const asset = (t.asset ?? '').padEnd(8);
+      const amt   = (t.amountUsd != null ? fmtUSD(t.amountUsd) : '').padEnd(8);
+      let icon, color, label;
+      if      (t.status === 'executed') { icon = '✓'; color = 'green-fg';  label = 'on-chain'; }
+      else if (t.status === 'dry_run')  { icon = '~'; color = 'cyan-fg';   label = 'dry run';  }
+      else if (t.status === 'blocked')  { icon = '✗'; color = 'red-fg';    label = (t.reason ?? 'blocked').slice(0, 30); }
+      else if (t.status === 'failed')   { icon = '⚠'; color = 'red-fg';    label = 'FAILED';   }
+      else if (t.status === 'skipped')  { icon = '—'; color = 'white-fg';  label = 'skipped';  }
+      else                              { icon = '·'; color = t.type === 'buy' ? 'green-fg' : 'red-fg'; label = 'proposed'; }
+      L.push(`  {${color}}{bold}${icon}{/} {${color}}${sign} ${side.padEnd(5)} ${asset} ${amt}{/}${label}`);
     }
-  } else if (decision.action === 'hold') {
-    lines.push('');
-    lines.push('  {white-fg}· Holding — no trades{/}');
+  } else {
+    L.push('  · Holding — no trades');
   }
+  L.push('');
 
-  // ── Flags: deduped, max 4, critical first ─────────────────────────────────
+  // All flags — no cap, no truncation
   const rawFlags = [
     ...(decision.riskFlags ?? []).filter(f =>
       !f.startsWith('BLOCKED') && !f.startsWith('TRIMMED') &&
@@ -545,38 +540,98 @@ function updateReasonDisplay(result, triggeredBy = null) {
     ...violations.filter(v => !v.startsWith('TRIMMED')),
   ];
   const uniqueFlags = [...new Set(rawFlags)];
-  if (uniqueFlags.length > 0) {
-    lines.push('');
-    const shown = uniqueFlags.slice(0, 4);
-    for (const f of shown) {
-      const isCrit = f.startsWith('BLOCKED') || f.startsWith('HALT') || f.startsWith('STOP');
-      const color  = isCrit ? 'red-fg' : 'yellow-fg';
-      const icon   = isCrit ? '✗' : '⚠';
-      const clip   = f.length > 68 ? f.slice(0, 66) + '…' : f;
-      lines.push(`  {${color}}${icon} ${clip}{/}`);
-    }
-    if (uniqueFlags.length > 4) {
-      lines.push(`  {white-fg}  + ${uniqueFlags.length - 4} more flag(s){/}`);
-    }
+  for (const f of uniqueFlags) {
+    const isCrit = f.startsWith('BLOCKED') || f.startsWith('HALT') || f.startsWith('STOP');
+    const color  = isCrit ? 'red-fg' : 'yellow-fg';
+    const icon   = isCrit ? '✗' : '⚠';
+    const clip   = f.length > LW - 4 ? f.slice(0, LW - 5) + '…' : f;
+    L.push(`  {${color}}${icon} ${clip}{/}`);
   }
 
-  // ── Recent decisions ──────────────────────────────────────────────────────
+  // Recent decisions
   localDecisionHistory.push({
     action: decision.action ?? '?', confidence: conf,
     timestamp: new Date(), triggeredBy: triggeredBy ?? 'manual',
   });
   if (localDecisionHistory.length > 6) localDecisionHistory.shift();
 
-  lines.push('');
-  lines.push('{white-fg}─────────────────────────────────────────────{/}');
+  L.push('');
+  L.push('─'.repeat(LW));
   for (const entry of [...localDecisionHistory].reverse()) {
     const ac   = ACTION_COLOR[entry.action] ?? 'white-fg';
     const time = entry.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-    const act  = entry.action.toUpperCase().padEnd(9);
-    const trig = (entry.triggeredBy ?? '').slice(0, 20);
-    lines.push(
-      `  {white-fg}${time}{/}  {${ac}}{bold}${act}{/}  {white-fg}${entry.confidence}%  ${trig}{/}`
-    );
+    L.push(`  ${time}  {${ac}}{bold}${entry.action.toUpperCase().padEnd(9)}{/}  ${entry.confidence}%  ${(entry.triggeredBy ?? '').slice(0, 22)}`);
+  }
+
+  // ── Build RIGHT column lines — Market Analysis ────────────────────────────
+  const R = [];
+  const market    = lastMarketSnapshot ?? {};
+  const portfolio = lastPortfolio;
+
+  R.push('{bold}Market Analysis{/}');
+  R.push('─'.repeat(50));
+
+  // Holdings snapshot: symbol, 1h, 24h
+  if (portfolio?.holdings?.length) {
+    R.push('{bold}Holdings         1h         24h{/}');
+    for (const h of portfolio.holdings.filter(h => h.symbol !== 'USDC' && !h.unpriced)) {
+      const m    = market[h.symbol] ?? {};
+      const h1   = m.change1h  != null ? `${m.change1h  >= 0 ? '+' : ''}${m.change1h.toFixed(2)}%`  : '  —  ';
+      const h24  = m.change24h != null ? `${m.change24h >= 0 ? '+' : ''}${m.change24h.toFixed(2)}%` : '  —  ';
+      const c1   = m.change1h  >= 0 ? 'green-fg' : 'red-fg';
+      const c24  = m.change24h >= 0 ? 'green-fg' : 'red-fg';
+      R.push(
+        `  ${h.symbol.padEnd(8)}  {${c1}}${h1.padStart(7)}{/}    {${c24}}${h24.padStart(7)}{/}`
+      );
+    }
+    R.push('');
+  }
+
+  // Top 1h movers from full market (not held)
+  const heldSet = new Set((portfolio?.holdings ?? []).map(h => h.symbol));
+  const movers = Object.entries(market)
+    .filter(([sym, d]) => !heldSet.has(sym) && sym !== 'USDC' && d.change1h != null)
+    .sort((a, b) => b[1].change1h - a[1].change1h)
+    .slice(0, 5);
+
+  if (movers.length > 0) {
+    R.push('{bold}Top Movers (1h — not held){/}');
+    for (const [sym, d] of movers) {
+      const c = d.change1h >= 0 ? 'green-fg' : 'red-fg';
+      const vol = d.volume24hUsd != null ? ` vol $${(d.volume24hUsd / 1e6).toFixed(0)}M` : '';
+      R.push(`  {${c}}{bold}${sym.padEnd(9)}{/} {${c}}${d.change1h >= 0 ? '+' : ''}${d.change1h.toFixed(2)}%{/}${vol}`);
+    }
+    R.push('');
+  }
+
+  // Market health: up/down ratio across portfolio holdings
+  if (portfolio?.holdings?.length) {
+    const moves = portfolio.holdings
+      .filter(h => h.symbol !== 'USDC' && !h.unpriced && market[h.symbol]?.change24h != null)
+      .map(h => market[h.symbol].change24h);
+    const up   = moves.filter(c => c > 0).length;
+    const down = moves.filter(c => c < 0).length;
+    const healthColor = up > down ? 'green-fg' : down > up ? 'red-fg' : 'yellow-fg';
+    R.push(`{bold}Holdings Health{/}  {${healthColor}}${up} up / ${down} down{/} (24h)`);
+
+    // Cash & drawdown
+    const cashPct = portfolio.totalValueUsd > 0
+      ? ((portfolio.cashUsd / portfolio.totalValueUsd) * 100).toFixed(1)
+      : '0.0';
+    const drawdown = portfolio.peakValueUsd > 0
+      ? (((portfolio.peakValueUsd - portfolio.totalValueUsd) / portfolio.peakValueUsd) * 100).toFixed(2)
+      : '0.00';
+    R.push(`Cash  {white-fg}$${portfolio.cashUsd?.toFixed(2)} (${cashPct}%){/}    Draw  {white-fg}${drawdown}%{/}`);
+  }
+
+  // ── Zip left + right columns with │ separator ─────────────────────────────
+  const SEP  = ' {white-fg}│{/} ';
+  const rows  = Math.max(L.length, R.length);
+  const lines = [];
+  for (let i = 0; i < rows; i++) {
+    const left  = L[i] ?? '';
+    const right = R[i] ?? '';
+    lines.push(padCol(left, LW) + SEP + right);
   }
 
   reasonBox.setContent(lines.join('\n'));
