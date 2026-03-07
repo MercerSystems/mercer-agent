@@ -35,7 +35,7 @@ const screen = blessed.screen({ smartCSR: true, title: 'Mercer — Ask' });
 blessed.box({
   parent:  screen,
   top:     0, left: 0, width: '100%', height: 1,
-  content: ' ▓▓  MERCER SYSTEMS  ◈  Ask Mercer  ▓▓',
+  content: ' ▓▓  MERCER SYSTEMS  ◈  Ask Mercer  ◈  Powered by Claude  ▓▓',
   tags:    true,
   align:   'center',
   style:   { fg: 'black', bg: 'cyan', bold: true },
