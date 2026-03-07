@@ -465,83 +465,129 @@ function updateReasonDisplay(result, triggeredBy = null) {
     alert:     'magenta-fg',
   }[decision.action] ?? 'white-fg';
 
-  const conf           = ((decision.confidence ?? 0) * 100).toFixed(0);
-  const bar            = confBar(parseFloat(conf));
-  const blockedTag     = blocked ? '{red-fg}YES ⛔{/}' : '{green-fg}NO{/}';
-  const bypassTag      = stopLossBypass  ? '   {red-fg}{bold}⚡ STOP-LOSS BYPASS{/}'
-                       : takeProfitBypass ? '   {green-fg}{bold}🎯 TAKE-PROFIT BYPASS{/}'
-                       : '';
-  const triggerTag     = triggeredBy ? `   {cyan-fg}Triggered by:{/} {grey-fg}${triggeredBy}{/}` : '';
+  const conf       = ((decision.confidence ?? 0) * 100).toFixed(0);
+  const bar        = confBar(parseFloat(conf));
+  const blockedTag = blocked ? '{red-fg}⛔ BLOCKED{/}' : '';
+  const bypassTag  = stopLossBypass   ? ' {red-fg}{bold}⚡ STOP-LOSS{/}'
+                   : takeProfitBypass  ? ' {green-fg}{bold}✓ TAKE-PROFIT{/}'
+                   : '';
+  const trigTag    = triggeredBy ? `  {grey-fg}↳ ${triggeredBy}{/}` : '';
 
-  const lines = [
-    `{cyan-fg}Action:{/} {bold}{${actionColor}}${(decision.action ?? '?').toUpperCase()}{/}` +
-      `   {cyan-fg}Confidence:{/} ${bar} ${conf}%   {cyan-fg}Blocked:{/} ${blockedTag}${bypassTag}${triggerTag}`,
-    '',
-    `{cyan-fg}Rationale:{/} ${decision.rationale ?? 'N/A'}`,
-  ];
+  const lines = [];
 
-  if (decision.trades?.length > 0) {
-    lines.push('', '{cyan-fg}Proposed Trades:{/}');
-    for (const t of decision.trades) {
-      const tc   = t.type === 'buy' ? 'green-fg' : 'red-fg';
-      const sign = t.type === 'buy' ? '+' : '−';
-      lines.push(
-        `  {${tc}}${sign} ${t.type.toUpperCase()} ${t.asset} ${fmtUSD(t.amountUsd)}{/}` +
-        (t.reason ? `  — ${t.reason}` : '')
-      );
-    }
-  } else {
-    lines.push('', '{grey-fg}No trades proposed.{/}');
-  }
+  // ── Header: action + confidence + status ─────────────────────────────────
+  lines.push(
+    `{bold}{${actionColor}}${(decision.action ?? '?').toUpperCase()}{/}` +
+    `  ${bar} {bold}${conf}%{/}` +
+    (blockedTag  ? `  ${blockedTag}`  : '') +
+    (bypassTag   ? `  ${bypassTag}`   : '') +
+    trigTag
+  );
 
-  if (decision.riskFlags?.length > 0) {
-    lines.push('', '{yellow-fg}Risk Flags:{/}');
-    for (const f of decision.riskFlags) lines.push(`  {yellow-fg}⚠ ${f}{/}`);
-  }
-
-  if (violations.length > 0) {
-    lines.push('', '{red-fg}Mandate Enforcements:{/}');
-    for (const v of violations) lines.push(`  {red-fg}✗ ${v}{/}`);
-  }
-
-  // Execution log
+  // ── Execution results — top priority ────────────────────────────────────
   if (execution) {
     if (execution.status === 'throttled') {
-      lines.push('', `{grey-fg}Execution throttled — ${execution.secSinceLast}s since last trade (min: ${execution.minIntervalSec}s){/}`);
+      lines.push(`{grey-fg}⏸ Throttled — ${execution.secSinceLast}s since last trade{/}`);
+    } else if (execution.status === 'skipped_low_confidence') {
+      lines.push(`{grey-fg}⏸ Skipped — confidence below ${((execution.skipBelow ?? 0.5) * 100).toFixed(0)}% floor{/}`);
     } else if (execution.trades?.length > 0) {
-      lines.push('', '{cyan-fg}Execution Log:{/}');
+      lines.push('{cyan-fg}── Executed ──────────────────────────────────{/}');
       for (const t of execution.trades) {
-        const sc   = t.status === 'executed' ? 'green-fg' : t.status === 'dry_run' ? 'cyan-fg' : 'yellow-fg';
-        const side = t.side ?? t.type ?? '?';
+        const side = t.type ?? '?';
         const sign = side === 'buy' ? '+' : '−';
         const amt  = t.amountUsd != null ? fmtUSD(t.amountUsd) : '';
-        lines.push(`  {${sc}}${sign} ${side.toUpperCase()} ${t.asset ?? ''} ${amt}  [{bold}${t.status}{/}{${sc}}]{/}`);
+        if (t.status === 'executed') {
+          lines.push(`  {green-fg}{bold}✓ ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}{/}`);
+        } else if (t.status === 'dry_run') {
+          lines.push(`  {cyan-fg}~ ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}  DRY RUN{/}`);
+        } else if (t.status === 'blocked') {
+          lines.push(`  {red-fg}✗ ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}  blocked{/}`);
+        } else if (t.status === 'failed') {
+          lines.push(`  {red-fg}⚠ ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}  FAILED{/}`);
+        } else {
+          lines.push(`  {grey-fg}— ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}  ${t.status}{/}`);
+        }
       }
     }
   }
 
-  // Record in local history (cap at 5)
+  // ── Rationale ────────────────────────────────────────────────────────────
+  const rationale = decision.rationale ?? 'N/A';
+  lines.push('{cyan-fg}── Rationale ─────────────────────────────────{/}');
+  // Word-wrap rationale at ~70 chars
+  const words = rationale.split(' ');
+  let line = '  ';
+  for (const w of words) {
+    if (line.length + w.length > 72) { lines.push(`{grey-fg}${line.trimEnd()}{/}`); line = '  '; }
+    line += w + ' ';
+  }
+  if (line.trim()) lines.push(`{grey-fg}${line.trimEnd()}{/}`);
+
+  // ── Proposed trades (compact — no inline reason) ─────────────────────────
+  const proposedTrades = decision.trades ?? [];
+  if (proposedTrades.length > 0) {
+    lines.push('{cyan-fg}── Proposed ──────────────────────────────────{/}');
+    for (const t of proposedTrades) {
+      const tc   = t.type === 'buy' ? 'green-fg' : 'red-fg';
+      const sign = t.type === 'buy' ? '+' : '−';
+      lines.push(`  {${tc}}${sign} ${t.type.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${fmtUSD(t.amountUsd)}{/}`);
+    }
+    // Trade reasons as dimmed details below
+    lines.push('');
+    for (const t of proposedTrades) {
+      if (t.reason) {
+        const prefix = `  ${t.asset}: `;
+        const rWords = t.reason.split(' ');
+        let rLine = prefix;
+        for (const w of rWords) {
+          if (rLine.length + w.length > 72) { lines.push(`{grey-fg}${rLine.trimEnd()}{/}`); rLine = ' '.repeat(prefix.length); }
+          rLine += w + ' ';
+        }
+        if (rLine.trim()) lines.push(`{grey-fg}${rLine.trimEnd()}{/}`);
+      }
+    }
+  } else {
+    lines.push('{grey-fg}No trades proposed.{/}');
+  }
+
+  // ── Violations / mandate enforcements (deduplicated, compact) ────────────
+  const allFlags = [
+    ...(decision.riskFlags ?? []).filter(f => !f.startsWith('BLOCKED') && !f.startsWith('TRIMMED')),
+    ...violations,
+  ];
+  if (allFlags.length > 0) {
+    const unique = [...new Set(allFlags)];
+    lines.push('{yellow-fg}── Flags ─────────────────────────────────────{/}');
+    for (const f of unique) {
+      const color = f.startsWith('BLOCKED') || f.startsWith('HALT') ? 'red-fg' : 'yellow-fg';
+      const icon  = f.startsWith('BLOCKED') || f.startsWith('HALT') ? '✗' : '⚠';
+      // Truncate long flag lines
+      const display = f.length > 70 ? f.slice(0, 68) + '…' : f;
+      lines.push(`  {${color}}${icon} ${display}{/}`);
+    }
+  }
+
+  // ── Recent decisions history ──────────────────────────────────────────────
+  // Record in local history (cap at 8)
   localDecisionHistory.push({
     action:      decision.action ?? '?',
     confidence:  conf,
     timestamp:   new Date(),
     triggeredBy: triggeredBy ?? 'manual',
   });
-  if (localDecisionHistory.length > 5) localDecisionHistory.shift();
+  if (localDecisionHistory.length > 8) localDecisionHistory.shift();
 
-  // Append compact decision history log
-  if (localDecisionHistory.length > 0) {
-    lines.push('', '{cyan-fg}─── Recent Decisions ───────────────────────{/}');
-    for (const entry of [...localDecisionHistory].reverse()) {
-      const ac = {
-        hold: 'yellow-fg', rebalance: 'cyan-fg', buy: 'green-fg', sell: 'red-fg', alert: 'magenta-fg',
-      }[entry.action] ?? 'white-fg';
-      const time = entry.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-      lines.push(
-        `  {grey-fg}${time}{/}  {${ac}}{bold}${entry.action.toUpperCase().padEnd(9)}{/}` +
-        `{grey-fg}${entry.confidence}%  ${entry.triggeredBy}{/}`
-      );
-    }
+  lines.push('{cyan-fg}── Recent ────────────────────────────────────{/}');
+  for (const entry of [...localDecisionHistory].reverse()) {
+    const ac = {
+      hold: 'yellow-fg', rebalance: 'cyan-fg', buy: 'green-fg', sell: 'red-fg', alert: 'magenta-fg',
+    }[entry.action] ?? 'white-fg';
+    const time = entry.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const trig = (entry.triggeredBy ?? '').slice(0, 18);
+    lines.push(
+      `  {grey-fg}${time}{/}  {${ac}}{bold}${entry.action.toUpperCase().padEnd(9)}{/}` +
+      `{grey-fg}${entry.confidence}%  ${trig}{/}`
+    );
   }
 
   reasonBox.setContent(lines.join('\n'));
@@ -771,13 +817,13 @@ function loadLastDecision() {
     // Show the most recent decision in the box immediately
     const last = hist[hist.length - 1];
     if (last) {
-      const ts = new Date(last.timestamp).toLocaleString();
-      const ac = { hold:'yellow-fg', rebalance:'cyan-fg', buy:'green-fg', sell:'red-fg', alert:'magenta-fg' }[last.action] ?? 'white-fg';
+      const ts = new Date(last.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const ac  = { hold:'yellow-fg', rebalance:'cyan-fg', buy:'green-fg', sell:'red-fg', alert:'magenta-fg' }[last.action] ?? 'white-fg';
+      const conf = ((last.confidence ?? 0) * 100).toFixed(0);
       reasonBox.setContent(
-        `{grey-fg}Last saved decision (${ts}):{/}\n\n` +
-        `{cyan-fg}Action:{/} {bold}{${ac}}${(last.action ?? '?').toUpperCase()}{/}   ` +
-        `{cyan-fg}Confidence:{/} ${((last.confidence ?? 0) * 100).toFixed(0)}%\n\n` +
-        `{cyan-fg}Rationale:{/} ${last.rationale ?? 'N/A'}\n\n` +
+        `{bold}{${ac}}${(last.action ?? '?').toUpperCase()}{/}  ${confBar(parseFloat(conf))} {bold}${conf}%{/}  {grey-fg}${ts} · persisted{/}\n` +
+        `{cyan-fg}── Rationale ─────────────────────────────────{/}\n` +
+        `{grey-fg}  ${last.rationale ?? 'N/A'}{/}\n\n` +
         `{grey-fg}Waiting for live reasoning cycle...{/}`
       );
       reasonBox.setScrollPerc(0);
