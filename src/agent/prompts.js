@@ -271,7 +271,10 @@ export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_
     .filter(([, d]) => {
       if (!d.volume24hUsd || !d.marketCapUsd || d.marketCapUsd <= 0) return false;
       const turnover = (d.volume24hUsd / d.marketCapUsd) * 100;
-      return turnover >= 50 && !heldSymbols.has(d.symbol ?? '');
+      // Must be gaining traction (not being dumped) + small enough to be a real new launch
+      const gaining = (d.change1h ?? 0) > 0 || (d.change24h ?? 0) > 0;
+      const smallCap = d.marketCapUsd < 50_000_000;
+      return turnover >= 50 && gaining && smallCap && !heldSymbols.has(d.symbol ?? '');
     })
     .map(([symbol, d]) => {
       const turnover = ((d.volume24hUsd / d.marketCapUsd) * 100).toFixed(0);
@@ -386,9 +389,10 @@ ${topMovers.join('\n') || '  No data'}
 ## Sustained Movers — 1h >3% AND 24h >5% (narrative in motion, not held)
 ${sustainedMovers.join('\n') || '  None meeting threshold'}
 
-## New Launch Signals — turnover >50% (volume/market cap, not held)
-High turnover = heavy trading relative to size. This is the fingerprint of a new token gaining traction.
-Small position sizing recommended ($1M–$3M cap = micro-cap risk). Stop-loss must be respected.
+## New Launch Signals — turnover >50%, gaining, under $50M cap (not held)
+High turnover = heavy trading relative to size on a token still gaining price — the fingerprint of early discovery.
+All entries here are price-positive (1h or 24h up) so you are NOT looking at dumps.
+Small position sizing for micro-caps ($1M–$5M cap). These move fast — take profit at +20–30% and redeploy.
 ${newLaunchSignals.join('\n') || '  None meeting threshold'}
 
 ## Momentum Laggards — bottom 8 by 1h
