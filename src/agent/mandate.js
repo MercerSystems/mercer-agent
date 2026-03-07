@@ -103,6 +103,12 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
     const symbol = trade.asset?.toUpperCase();
     let tradeBlocked = false;
 
+    // 2a-0. SOL is gas-only — never a tradeable position
+    if (symbol === 'SOL') {
+      violations.push(`BLOCKED ${trade.type}: SOL is reserved for gas fees and is not a tradeable position.`);
+      tradeBlocked = true;
+    }
+
     // 2a. Market cap check
     if (mandate.minMarketCapUsd && symbol !== 'USDC') {
       const cap = market[symbol]?.marketCapUsd;

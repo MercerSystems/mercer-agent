@@ -33,6 +33,10 @@ You see up to 150 tradeable Solana ecosystem tokens in real time. Evaluate ALL o
 - Prefer tokens with strong recent momentum AND sufficient volume to exit cleanly.
 - Never size into something you can't exit quickly.
 
+**SOL is gas, not a trade:**
+- Never propose buying or selling SOL. It exists solely to pay transaction fees.
+- If the portfolio shows a SOL holding, ignore it for rebalancing purposes.
+
 **When to hold USDC:**
 - Broad market weakness — multiple tokens down across the board
 - No clear momentum signal anywhere in the 150-token universe
@@ -158,7 +162,7 @@ Stop-Loss:       ${mandate.stopLossPct}% from entry (watchdog auto-executes)
 Trailing Stop:   ${mandate.trailingStopPct ?? 'not set'}% from peak price (watchdog auto-executes)
 Profit Ladder:   ${mandate.takeProfitLadder?.map((r, i) => `rung ${i + 1}: sell ${(r.sellFraction * 100).toFixed(0)}% at +${r.pct}%`).join(', ') ?? 'not set'} (watchdog auto-executes)
 Max Drawdown:    ${mandate.maxDrawdownPct}%
-SOL Reserve:     Always keep ≥$4 in SOL for gas fees — executor enforces this on sells
+SOL Reserve:     SOL is GAS ONLY — never propose buying or selling SOL. It is not a tradeable position.
 Min Market Cap:  $${mandate.minMarketCapUsd ? (mandate.minMarketCapUsd / 1e6).toFixed(0) + 'M' : 'none'} (tokens below this are blocked)
 Min Volume:      $${mandate.minVolume24hUsd ? (mandate.minVolume24hUsd / 1e6).toFixed(0) + 'M' : 'none'}/day (illiquid tokens blocked for buys)
 ${mandate.notes ? `Notes: ${mandate.notes}` : ''}
