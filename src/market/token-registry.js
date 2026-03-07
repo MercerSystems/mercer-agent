@@ -12,12 +12,35 @@
 // outdated Solana Labs token list (wrong addresses for newer tokens).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
+
 const COINGECKO_COIN_URL = 'https://api.coingecko.com/api/v3/coins';
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours — mint addresses are stable
+const CACHE_TTL      = 24 * 60 * 60 * 1000; // 24 hours — mint addresses are stable
+const REGISTRY_FILE  = join(process.cwd(), 'data', 'token-registry-cache.json');
 
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY ?? null;
 function cgHeaders() {
   return COINGECKO_API_KEY ? { 'x-cg-demo-api-key': COINGECKO_API_KEY } : {};
+}
+
+function loadPersistedCache() {
+  try {
+    const raw = JSON.parse(readFileSync(REGISTRY_FILE, 'utf8'));
+    // Re-hydrate as Map entries, skip stale entries
+    return new Map(
+      Object.entries(raw).filter(([, v]) => (Date.now() - v.resolvedAt) < CACHE_TTL)
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function persistCache(cache) {
+  try {
+    mkdirSync(join(process.cwd(), 'data'), { recursive: true });
+    writeFileSync(REGISTRY_FILE, JSON.stringify(Object.fromEntries(cache), null, 2));
+  } catch { /* non-fatal */ }
 }
 
 // Hardcoded core tokens — always available, no fetch needed
@@ -34,12 +57,16 @@ const CORE_TOKENS = {
   POPCAT:   { mint: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', decimals: 9 },
   FARTCOIN: { mint: '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump', decimals: 6 },
   AI16Z:    { mint: 'HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC', decimals: 6 },
-  POKT:     { mint: '6CAsXfiCXZfP8APCG6Vma2DFMindopxiqYQN4LSQfhoC', decimals: 6 },
-  GRASS:    { mint: 'Grass7B4RdKfBCjTKgSqnXkqjwiGvQyFbuSCUJr3XXjs', decimals: 9 },
+  POKT:   { mint: '6CAsXfiCXZfP8APCG6Vma2DFMindopxiqYQN4LSQfhoC',  decimals: 6 },
+  GRASS:  { mint: 'Grass7B4RdKfBCjTKgSqnXkqjwiGvQyFbuSCUJr3XXjs',  decimals: 9 },
+  SKR:    { mint: 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3',   decimals: 6 },
+  PIPPIN: { mint: 'Dfh5DzRgSvvCFDoYc2ciTkMrbDfRKybA4SoFbPmApump',  decimals: 6 },
+  '9BIT': { mint: 'HmMubgKx91Tpq3jmfcKQwsv5HrErqnCTTRJMB6afFR2u', decimals: 9 },
 };
 
-// In-memory cache: coingeckoId -> { mint, decimals, resolvedAt }
-const _cache = new Map();
+// Persistent cache: coingeckoId -> { mint, decimals, symbol, resolvedAt }
+// Loaded from disk on startup so wallet tokens survive server restarts.
+const _cache = loadPersistedCache();
 
 // In-flight promises — prevents duplicate concurrent fetches for the same token
 const _inflight = new Map();
@@ -86,6 +113,7 @@ export async function resolveToken(symbol, coingeckoId) {
       }
       const result = { mint: platform.contract_address, decimals: platform.decimal_place ?? 6 };
       _cache.set(coingeckoId, { ...result, symbol: sym, resolvedAt: Date.now() });
+      persistCache(_cache);
       console.log(`[Mercer TokenRegistry] Resolved ${sym} (${coingeckoId}): ${result.mint}`);
       return result;
     } catch (err) {
