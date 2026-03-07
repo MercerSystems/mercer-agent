@@ -30,10 +30,16 @@ export function buildLivePortfolio(base, market) {
     return { ...h, currentPrice, valueUsd, pnlPct };
   });
 
-  const totalValueUsd = holdings.reduce((sum, h) => sum + h.valueUsd, 0) + base.cashUsd;
+  // cashUsd = explicit base cash + any USDC held as an SPL token.
+  // Live wallets return cashUsd:0 with USDC inside holdings; mock portfolios
+  // carry cashUsd directly with no USDC holding. Both paths land here correctly.
+  const usdcHolding = holdings.find(h => h.symbol === 'USDC');
+  const cashUsd     = (base.cashUsd ?? 0) + (usdcHolding?.valueUsd ?? 0);
+
+  const totalValueUsd = holdings.reduce((sum, h) => sum + h.valueUsd, 0) + (base.cashUsd ?? 0);
 
   // Seed peak from current value if not set, so drawdown starts at 0%
   const peakValueUsd = base.peakValueUsd > 0 ? base.peakValueUsd : totalValueUsd;
 
-  return { ...base, holdings, totalValueUsd, peakValueUsd };
+  return { ...base, holdings, cashUsd, totalValueUsd, peakValueUsd };
 }
