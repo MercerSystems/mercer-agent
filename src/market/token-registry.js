@@ -57,6 +57,7 @@ const CORE_TOKENS = {
   POPCAT:   { mint: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', decimals: 9 },
   FARTCOIN: { mint: '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump', decimals: 6 },
   AI16Z:    { mint: 'HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC', decimals: 6 },
+  AIXBT:  { mint: '14zP2ToQ79XWvc7FQpm4bRnp9d6Mp1rFfsUW3gpLcRX',  decimals: 8 },
   POKT:   { mint: '6CAsXfiCXZfP8APCG6Vma2DFMindopxiqYQN4LSQfhoC',  decimals: 6 },
   GRASS:  { mint: 'Grass7B4RdKfBCjTKgSqnXkqjwiGvQyFbuSCUJr3XXjs',  decimals: 9 },
   SKR:    { mint: 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3',   decimals: 6 },
