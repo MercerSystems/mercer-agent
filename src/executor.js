@@ -104,11 +104,18 @@ async function executeTrade(trade, market, jupiterApi) {
     throw new Error(`Calculated raw amount is 0 for ${type} ${asset} $${amountUsd} — trade too small`);
   }
 
-  // ── MAX_TRADE_USD cap ──────────────────────────────────────────────────────
+  // ── MAX_TRADE_USD cap — trim to limit, never block entirely ───────────────
   const maxTradeUsd = parseFloat(process.env.MAX_TRADE_USD) || 35;
   if (amountUsd > maxTradeUsd) {
-    console.log(`[Mercer Executor] Trade blocked — $${amountUsd} exceeds MAX_TRADE_USD limit of $${maxTradeUsd}`);
-    return { ...trade, status: 'blocked', reason: `exceeds MAX_TRADE_USD limit of $${maxTradeUsd}` };
+    console.log(`[Mercer Executor] Trade trimmed — $${amountUsd} → $${maxTradeUsd} (MAX_TRADE_USD cap)`);
+    amountUsd = maxTradeUsd;
+    // Recalculate rawAmount with the trimmed value
+    if (type === 'buy') {
+      rawAmount = Math.round(amountUsd * Math.pow(10, USDC_DECIMALS));
+    } else {
+      const price = market[asset]?.price;
+      if (price) rawAmount = Math.round((amountUsd / price) * Math.pow(10, assetDecimals));
+    }
   }
 
   // ── Get quote ──────────────────────────────────────────────────────────────

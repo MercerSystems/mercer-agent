@@ -1167,12 +1167,15 @@ async function doChartRefresh() {
 
 // Trade-signal poller — triggers an immediate portfolio refresh when executor
 // confirms a new on-chain trade, so new holdings appear within 5s.
-let _lastSeenTradeAt = null;
+let _lastSeenTradeAt  = null;
+let _lastEarlyReason  = 0; // timestamp of last early-reason trigger
+const EARLY_REASON_CD = 60_000; // minimum 60s between early reasoning cycles
+
 async function pollTradeSignal() {
   try {
     const { lastTradeAt, earlyReason } = await fetchJSON(`${API_BASE}/events`);
-    if (earlyReason) {
-      // Momentum breakout detected — fire a full reasoning cycle immediately
+    if (earlyReason && (Date.now() - _lastEarlyReason) > EARLY_REASON_CD) {
+      _lastEarlyReason = Date.now();
       doRefresh(true);
     } else if (lastTradeAt && lastTradeAt !== _lastSeenTradeAt) {
       _lastSeenTradeAt = lastTradeAt;
