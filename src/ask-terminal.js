@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Mercer Systems — ask-terminal.js
-// Ask Mercer — clean terminal interface, two-panel layout
+// Ask Mercer — minimal terminal interface, native background
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dotenv/config';
@@ -34,7 +34,7 @@ const screen = blessed.screen({ smartCSR: true, title: 'Mercer — Ask' });
 
 blessed.box({
   parent:  screen,
-  top:     0, left: 0, width: '100%', height: 1,
+  top: 0, left: 0, width: '100%', height: 1,
   content: ' ▓▓  MERCER SYSTEMS  ◈  Ask Mercer  ◈  Powered by Claude  ▓▓',
   tags:    true,
   align:   'center',
@@ -45,83 +45,73 @@ blessed.box({
 
 const historyBox = blessed.box({
   parent:       screen,
-  top:          1, left: 0, width: '64%', bottom: 3,
+  top: 1, left: 0, width: '64%', bottom: 3,
   tags:         true,
   scrollable:   true,
   alwaysScroll: true,
   mouse:        true,
   keys:         false,
-  style:        { fg: 'white', bg: 'black' },
   padding:      { top: 1, left: 2, right: 1 },
-  content:      '{grey-fg}Ask Mercer anything about your portfolio, market, or strategy.{/}',
+  content:      'Ask Mercer anything about your portfolio, market, or strategy.',
 });
 
 // ─── Vertical separator ────────────────────────────────────────────────────────
 
 const vSep = blessed.box({
-  parent:  screen,
-  top:     1, left: '64%', width: 1, bottom: 3,
-  style:   { fg: 'grey', bg: 'black' },
+  parent: screen,
+  top: 1, left: '64%', width: 1, bottom: 3,
+  tags: true,
 });
 
-// fill with │ on each render
 function renderSep() {
-  vSep.setContent(Array(screen.height).fill('{grey-fg}│{/}').join('\n'));
+  vSep.setContent(Array(screen.height).fill('│').join('\n'));
 }
 
 // ─── Context panel — right 35% ────────────────────────────────────────────────
 
 const contextBox = blessed.box({
   parent:  screen,
-  top:     1, left: '65%', width: '35%', bottom: 3,
+  top: 1, left: '65%', width: '35%', bottom: 3,
   tags:    true,
-  style:   { fg: 'white', bg: 'black' },
   padding: { top: 1, left: 2, right: 1 },
-  content: '{grey-fg}connecting...{/}',
+  content: 'connecting...',
 });
 
-// ─── Input separator line ─────────────────────────────────────────────────────
+// ─── Input separator ─────────────────────────────────────────────────────────
 
 const inputSepBox = blessed.box({
-  parent:  screen,
-  bottom:  2, left: 0, width: '100%', height: 1,
-  tags:    true,
-  style:   { fg: 'grey', bg: 'black' },
+  parent: screen,
+  bottom: 2, left: 0, width: '100%', height: 1,
+  tags:   true,
 });
 
 function renderInputSep() {
-  inputSepBox.setContent('{grey-fg}' + '─'.repeat(screen.width || 120) + '{/}');
+  inputSepBox.setContent('─'.repeat(screen.width || 120));
 }
 
-// ─── Prompt label ─────────────────────────────────────────────────────────────
+// ─── Prompt + input ───────────────────────────────────────────────────────────
 
-const promptLabel = blessed.box({
+blessed.box({
   parent:  screen,
   bottom:  1, left: 0, width: 2, height: 1,
-  tags:    true,
-  style:   { fg: 'cyan', bg: 'black' },
-  content: '{cyan-fg}›{/}',
+  content: '›',
 });
-
-// ─── Input box (single line, borderless) ──────────────────────────────────────
 
 const inputBox = blessed.textbox({
   parent:       screen,
   bottom:       1, left: 2, width: '100%-2', height: 1,
   inputOnFocus: true,
-  style:        { fg: 'white', bg: 'black' },
 });
 
 // ─── Status bar ───────────────────────────────────────────────────────────────
 
 const statusBar = blessed.box({
-  parent:  screen,
-  bottom:  0, left: 0, width: '100%', height: 1,
-  tags:    true,
-  style:   { fg: 'white', bg: 'black' },
+  parent: screen,
+  bottom: 0, left: 0, width: '100%', height: 1,
+  tags:   true,
 });
 
-const HINTS = '{grey-fg}[enter]{/} send  {grey-fg}[↑↓]{/} scroll/history  {grey-fg}[c]{/} clear  {grey-fg}[q]{/} quit    ';
+const HINTS = '[enter] send  [↑↓] scroll/history  [c] clear  [q] quit    ';
 
 function setStatus(msg) {
   statusBar.setContent(HINTS + msg);
@@ -172,11 +162,11 @@ function renderHistory() {
     const isUser = entry.role === 'user';
 
     if (isUser) {
-      lines.push(`{grey-fg}${time}{/}  {white-fg}{bold}you{/}`);
+      lines.push(`${time}  you`);
       for (const l of wrapText(entry.text, maxW)) lines.push(`  ${l}`);
     } else {
-      lines.push(`{grey-fg}${time}{/}  {cyan-fg}{bold}mercer{/}`);
-      for (const l of wrapText(entry.text, maxW)) lines.push(`  {grey-fg}${l}{/}`);
+      lines.push(`${time}  mercer`);
+      for (const l of wrapText(entry.text, maxW)) lines.push(`  ${l}`);
       if (i < history.length - 1) lines.push('');
     }
     lines.push('');
@@ -200,18 +190,18 @@ async function refreshContext() {
 
     if (pRes) {
       const total = pRes.totalValue ?? pRes.totalValueUsd ?? 0;
-      const live  = pRes.source === 'live';
-      lines.push(`{grey-fg}portfolio  ${live ? '{green-fg}live{/}' : '{yellow-fg}mock{/}'}{/}`);
-      lines.push(`{white-fg}{bold}$${total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{/}`);
+      const src   = pRes.source === 'live' ? 'live' : 'mock';
+      lines.push(`portfolio  ${src}`);
+      lines.push(`$${total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
       lines.push('');
 
       for (const h of (pRes.holdings ?? []).filter(h => h.symbol !== 'SOL').slice(0, 6)) {
         const sym = (h.symbol ?? '?').padEnd(6);
         const val = h.valueUsd != null ? `$${h.valueUsd.toFixed(2)}` : '';
         const pnl = h.pnlPct  != null
-          ? h.pnlPct >= 0 ? `{green-fg}+${h.pnlPct.toFixed(1)}%{/}` : `{red-fg}${h.pnlPct.toFixed(1)}%{/}`
+          ? `${h.pnlPct >= 0 ? '+' : ''}${h.pnlPct.toFixed(1)}%`
           : '';
-        lines.push(`{grey-fg}${sym}{/}  ${val.padEnd(9)}  ${pnl}`);
+        lines.push(`${sym}  ${val.padEnd(9)}  ${pnl}`);
       }
       lines.push('');
     }
@@ -224,18 +214,17 @@ async function refreshContext() {
         const s7d  = sol.change7d  ?? null;
 
         let regime;
-        if      (s7d > 15  && s24h > 0)  regime = '{green-fg}bull run{/}';
-        else if (s7d > 5   && s24h >= 0) regime = '{green-fg}recovery{/}';
-        else if (s7d > 5   && s24h < -3) regime = '{yellow-fg}pullback{/}';
-        else if (s7d < -20)              regime = '{red-fg}bear{/}';
-        else if (s7d < -8)               regime = '{red-fg}correction{/}';
-        else if (s7d != null && Math.abs(s7d) <= 5 && Math.abs(s24h) > 4) regime = '{yellow-fg}volatile{/}';
+        if      (s7d > 15  && s24h > 0)  regime = 'bull run';
+        else if (s7d > 5   && s24h >= 0) regime = 'recovery';
+        else if (s7d > 5   && s24h < -3) regime = 'pullback';
+        else if (s7d < -20)              regime = 'bear';
+        else if (s7d < -8)               regime = 'correction';
+        else if (s7d != null && Math.abs(s7d) <= 5 && Math.abs(s24h) > 4) regime = 'volatile';
         else if (s7d != null)            regime = 'consolidation';
-        else                             regime = s1h > 2 ? '{green-fg}risk-on{/}' : s1h < -2 ? '{red-fg}risk-off{/}' : 'neutral';
+        else                             regime = s1h > 2 ? 'risk-on' : s1h < -2 ? 'risk-off' : 'neutral';
 
-        const s1hStr = `${s1h >= 0 ? '{green-fg}+' : '{red-fg}'}${s1h.toFixed(2)}%{/}`;
-        lines.push(`{grey-fg}market  ${regime}{/}`);
-        lines.push(`{grey-fg}sol{/}  $${sol.price?.toFixed(2) ?? '?'}  ${s1hStr}`);
+        lines.push(`market  ${regime}`);
+        lines.push(`sol  $${sol.price?.toFixed(2) ?? '?'}  ${s1h >= 0 ? '+' : ''}${s1h.toFixed(2)}% 1h`);
         lines.push('');
       }
 
@@ -245,21 +234,19 @@ async function refreshContext() {
         .slice(0, 6);
 
       if (movers.length > 0) {
-        lines.push('{grey-fg}top movers 1h{/}');
+        lines.push('top movers 1h');
         for (const [sym, d] of movers) {
-          const ch = d.change1h >= 0
-            ? `{green-fg}+${d.change1h.toFixed(1)}%{/}`
-            : `{red-fg}${d.change1h.toFixed(1)}%{/}`;
-          const mc = d.marketCapUsd != null ? `  {grey-fg}$${(d.marketCapUsd / 1e6).toFixed(0)}M{/}` : '';
-          lines.push(`{grey-fg}${sym.padEnd(7)}{/}  ${ch}${mc}`);
+          const ch = `${d.change1h >= 0 ? '+' : ''}${d.change1h.toFixed(1)}%`;
+          const mc = d.marketCapUsd != null ? `  $${(d.marketCapUsd / 1e6).toFixed(0)}M` : '';
+          lines.push(`${sym.padEnd(7)}  ${ch}${mc}`);
         }
       }
     }
 
-    contextBox.setContent(lines.length > 0 ? lines.join('\n') : '{grey-fg}no data{/}');
+    contextBox.setContent(lines.length > 0 ? lines.join('\n') : 'no data');
     screen.render();
   } catch {
-    contextBox.setContent('{grey-fg}unavailable{/}');
+    contextBox.setContent('unavailable');
     screen.render();
   }
 }
@@ -273,7 +260,7 @@ function startSpinner() {
   spinnerFrame = 0;
   spinnerTimer = setInterval(() => {
     spinnerFrame = (spinnerFrame + 1) % FRAMES.length;
-    setStatus(`{grey-fg}${FRAMES[spinnerFrame]}  thinking...{/}`);
+    setStatus(`${FRAMES[spinnerFrame]}  thinking...`);
   }, 120);
 }
 
@@ -296,9 +283,9 @@ function clearConversation() {
   inputHistoryArr = [];
   inputHistoryIdx = -1;
   saveHistory([]);
-  historyBox.setContent('{grey-fg}conversation cleared.{/}');
+  historyBox.setContent('conversation cleared.');
   screen.render();
-  setStatus('{grey-fg}ready{/}');
+  setStatus('ready');
 }
 
 // ─── API call ─────────────────────────────────────────────────────────────────
@@ -316,11 +303,11 @@ async function askMercer(question) {
     const data = await res.json();
     stopSpinner();
     appendHistory('mercer', data.answer ?? 'no response.');
-    setStatus('{grey-fg}ready{/}');
+    setStatus('ready');
   } catch (err) {
     stopSpinner();
     appendHistory('mercer', `error: ${err.message}`);
-    setStatus(`{red-fg}${err.message}{/}`);
+    setStatus(err.message);
   }
   inputBox.focus();
   screen.render();
@@ -342,7 +329,7 @@ inputBox.key(['enter'], async () => {
 screen.key(['c'], () => {
   if (waiting || screen.focused !== inputBox || confirmingClear || history.length === 0) return;
   confirmingClear = true;
-  setStatus('{yellow-fg}clear conversation? [y] yes  [n] no{/}');
+  setStatus('clear conversation? [y] yes  [n] no');
 });
 
 screen.key(['y'], () => {
@@ -354,11 +341,11 @@ screen.key(['y'], () => {
 screen.key(['n'], () => {
   if (!confirmingClear) return;
   confirmingClear = false;
-  setStatus('{grey-fg}ready{/}');
+  setStatus('ready');
 });
 
 screen.key(['q', 'C-c'], () => {
-  if (confirmingClear) { confirmingClear = false; setStatus('{grey-fg}ready{/}'); return; }
+  if (confirmingClear) { confirmingClear = false; setStatus('ready'); return; }
   screen.destroy();
   process.exit(0);
 });
@@ -393,7 +380,7 @@ inputBox.focus();
 renderSep();
 renderInputSep();
 if (history.length > 0) renderHistory();
-setStatus('{grey-fg}ready{/}');
+setStatus('ready');
 refreshContext();
 setInterval(refreshContext, 30_000);
 screen.render();
