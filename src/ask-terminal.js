@@ -111,7 +111,7 @@ const statusBar = blessed.box({
   tags:   true,
 });
 
-const HINTS = '[enter] send  [↑↓] scroll/history  [c] clear  [q] quit    ';
+const HINTS = '[enter] send  [↑↓] scroll/history  [ctrl+l] clear  [q] quit    ';
 
 function setStatus(msg) {
   statusBar.setContent(HINTS + msg);
@@ -326,8 +326,8 @@ inputBox.key(['enter'], async () => {
   await askMercer(question);
 });
 
-screen.key(['c'], () => {
-  if (waiting || screen.focused !== inputBox || confirmingClear || history.length === 0) return;
+screen.key(['C-l'], () => {
+  if (waiting || confirmingClear || history.length === 0) return;
   confirmingClear = true;
   setStatus('clear conversation? [y] yes  [n] no');
 });
