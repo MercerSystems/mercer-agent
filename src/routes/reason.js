@@ -18,6 +18,7 @@ import { sendAlert, stopLossAlertText, takeProfitAlertText, tradeAlertText } fro
 import { getActiveCooldowns } from '../agent/stop-cooldown.js';
 import { getBlockedBuys } from '../agent/blocked-buys.js';
 import { getSpikeRatio } from '../market/volume-tracker.js';
+import { recordTradeOutcome } from '../agent/trade-outcomes.js';
 
 const { SOLANA_RPC_URL, WALLET_ADDRESS } = process.env;
 
@@ -341,6 +342,11 @@ router.post('/', async (req, res, next) => {
             .filter(t => t.status === 'executed' || t.status === 'dry_run')
             .map(t => tradeAlertText(t, t.status));
           if (alerts.length > 0) await sendAlert(alerts.join('\n'));
+        }
+        // Record outcomes for win/loss tracking
+        const currentEntryPrices = loadEntryPrices();
+        for (const t of execution?.trades ?? []) {
+          recordTradeOutcome(t, currentEntryPrices, market);
         }
         const failed = execution?.trades?.filter(t => t.status === 'failed') ?? [];
         if (failed.length > 0) {

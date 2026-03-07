@@ -71,9 +71,17 @@ function parseDecision(raw) {
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   try {
     return JSON.parse(cleaned);
-  } catch {
-    throw new Error(`Failed to parse Claude response as JSON:\n${raw}`);
+  } catch { /* fall through */ }
+
+  // Extract the first {...} block from prose responses
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      return JSON.parse(match[0]);
+    } catch { /* fall through */ }
   }
+
+  throw new Error(`Failed to parse Claude response as JSON:\n${raw.slice(0, 300)}`);
 }
 
 /**

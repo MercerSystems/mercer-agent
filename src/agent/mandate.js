@@ -43,7 +43,7 @@ export const MANDATE_PRESETS = {
     maxDrawdownPct:   25,
     minCashPct:       20,
     minMarketCapUsd:  1_000_000,
-    minVolume24hUsd:    500_000,
+    minVolume24hUsd:    250_000,
     notes: 'Small-cap momentum discovery. Primary focus: micro and small-cap Solana tokens ($1M–$20M) gaining traction. Fast entries, fast exits. Build the portfolio through asymmetric small-cap wins — shift to large caps once portfolio exceeds $2K.',
   },
   aggressive: {
@@ -67,6 +67,12 @@ export const MANDATE_PRESETS = {
 
 import { isInStopCooldown } from './stop-cooldown.js';
 import { isBuyBlocked } from './blocked-buys.js';
+
+function fmtUsd(n) {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `$${(n / 1_000).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
+}
 
 /**
  * Checks a Claude-generated decision against the active mandate.
@@ -131,7 +137,7 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
       const vol = market[symbol]?.volume24hUsd;
       if (vol != null && vol < mandate.minVolume24hUsd) {
         violations.push(
-          `BLOCKED ${trade.type}: ${symbol} 24h volume $${(vol / 1e6).toFixed(1)}M below ${(mandate.minVolume24hUsd / 1e6).toFixed(0)}M minimum.`
+          `BLOCKED ${trade.type}: ${symbol} 24h volume ${fmtUsd(vol)} below ${fmtUsd(mandate.minVolume24hUsd)} minimum.`
         );
         tradeBlocked = true;
       }
@@ -139,7 +145,7 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
 
     // 2c. Stop-loss re-entry cooldown — prevents buying back a recently stopped-out token
     if (!tradeBlocked && (trade.type === 'buy' || isSwap) && symbol !== 'USDC') {
-      if (isInStopCooldown(symbol)) {
+      if (isInStopCooldown(symbol, market)) {
         violations.push(
           `BLOCKED ${trade.type}: ${symbol} is in stop-loss re-entry cooldown — too soon to re-enter after recent stop-out.`
         );

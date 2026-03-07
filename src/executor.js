@@ -115,7 +115,11 @@ async function executeSwapTrade(trade, market, jupiterApi) {
 
   let quote;
   try {
-    quote = await jupiterApi.quoteGet({ inputMint, outputMint, amount: rawAmount, slippageBps: 50 });
+    const fromCap    = market[fromAsset]?.marketCapUsd ?? Infinity;
+    const toCap      = market[toAsset]?.marketCapUsd   ?? Infinity;
+    const isMicroCap = fromCap < 5_000_000 || toCap < 5_000_000;
+    const slippageBps = isMicroCap ? 300 : 100;
+    quote = await jupiterApi.quoteGet({ inputMint, outputMint, amount: rawAmount, slippageBps });
   } catch (err) {
     let body = '';
     try { body = err.response ? await err.response.text() : ''; } catch { body = '(could not read response body)'; }
@@ -296,16 +300,39 @@ async function executeTrade(trade, market, jupiterApi) {
     }
   }
 
+  // ── Full-exit snap for sells — use entire on-chain balance when selling ≥90% ─
+  // Prevents dust from price-precision rounding. Only runs in live mode.
+  if (type === 'sell' && asset !== 'SOL' && !DRY_RUN && process.env.SOLANA_RPC_URL) {
+    try {
+      const kp   = loadKeypair();
+      const conn = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+      const { value: tokenAccounts } = await conn.getParsedTokenAccountsByOwner(
+        kp.publicKey, { mint: new PublicKey(assetMint) }
+      );
+      const onChainRaw    = tokenAccounts[0]?.account.data.parsed.info.tokenAmount.amount   ?? '0';
+      const onChainUi     = tokenAccounts[0]?.account.data.parsed.info.tokenAmount.uiAmount ?? 0;
+      const onChainRawInt = Number(onChainRaw);
+      if (onChainRawInt > 0 && rawAmount >= Math.floor(onChainRawInt * 0.90)) {
+        console.log(`[Mercer Executor] ${ts()} — Full-exit snap: selling entire balance (${onChainUi} ${asset}) to avoid dust`);
+        rawAmount = onChainRawInt;
+      }
+    } catch (err) {
+      console.warn(`[Mercer Executor] Full-exit snap skipped: ${err.message}`);
+    }
+  }
+
   // ── Get quote ──────────────────────────────────────────────────────────────
-  const quoteParams = { inputMint, outputMint, amount: rawAmount, slippageBps: 50 };
-  const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${rawAmount}&slippageBps=50`;
+  const assetCap    = market[asset]?.marketCapUsd ?? Infinity;
+  const slippageBps = assetCap < 5_000_000 ? 300 : 100;
+  const quoteParams = { inputMint, outputMint, amount: rawAmount, slippageBps };
+  const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${rawAmount}&slippageBps=${slippageBps}`;
 
   console.log(`[Mercer Executor] ${ts()} — Quote request — ${type.toUpperCase()} ${asset}`);
   console.log(`[Mercer Executor]   URL:         ${quoteUrl}`);
   console.log(`[Mercer Executor]   inputMint:   ${inputMint}`);
   console.log(`[Mercer Executor]   outputMint:  ${outputMint}`);
   console.log(`[Mercer Executor]   amount:      ${rawAmount} (raw) = $${amountUsd} USD`);
-  console.log(`[Mercer Executor]   slippageBps: 50`);
+  console.log(`[Mercer Executor]   slippageBps: ${slippageBps} (${assetCap < 5_000_000 ? 'micro-cap' : 'standard'})`);
 
   let quote;
   try {
@@ -380,6 +407,7 @@ async function executeTrade(trade, market, jupiterApi) {
         return { ...trade, status: 'blocked', reason: msg };
       }
     }
+
   }
 
   // ── Build swap transaction ─────────────────────────────────────────────────

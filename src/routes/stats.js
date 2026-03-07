@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Router } from 'express';
+import { getTradeStats } from '../agent/trade-outcomes.js';
 
 // ─── In-memory state ──────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ export function getStats() {
 const router = Router();
 
 router.get('/', (_req, res) => {
-  res.json(getStats());
+  res.json({ ...getStats(), tradeStats: getTradeStats() });
 });
 
 export default router;

@@ -31,10 +31,12 @@ export async function getPortfolio() {
   const market = await fetchSolanaMarketMap(150);
 
   const holdings = basePortfolio.holdings.map(h => {
-    const sym   = h.symbol;
-    const price = (sym ? market[sym]?.price : null) ?? 0;
-    const value = price * h.quantity;
-    return { token: sym, balance: h.quantity, price, value, _mint: h.mint, _unknown: h.unknown };
+    const sym       = h.symbol;
+    const mkt       = sym ? market[sym] : null;
+    const price     = mkt?.price ?? 0;
+    const change24h = mkt?.change24h ?? null;
+    const value     = price * h.quantity;
+    return { token: sym, balance: h.quantity, price, change24h, value, _mint: h.mint, _unknown: h.unknown };
   });
 
   // Auto-price any holding with price=0 using CoinGecko's mint-based endpoint.
@@ -45,8 +47,9 @@ export async function getPortfolio() {
     for (const h of needsPrice) {
       const p = mintPrices[h._mint];
       if (!p) continue;
-      h.price = p.usd ?? 0;
-      h.value = h.price * h.balance;
+      h.price      = p.usd ?? 0;
+      h.value      = h.price * h.balance;
+      h.change24h  = p.usd_24h_change ?? null;
       // If symbol was unknown, label with truncated mint so it shows in dashboard
       if (!h.token && h._mint) h.token = h._mint.slice(0, 6) + '…';
     }

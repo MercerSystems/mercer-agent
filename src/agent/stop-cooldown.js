@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
 const FILE        = join(process.cwd(), 'data', 'stop-cooldown.json');
-const COOLDOWN_MS = parseInt(process.env.STOP_REENTRY_COOLDOWN_MS) || 4 * 60 * 60 * 1000; // 4h
+const COOLDOWN_MS = parseInt(process.env.STOP_REENTRY_COOLDOWN_MS) || 24 * 60 * 60 * 1000; // 24h
 
 let _data = null; // lazy-loaded in-memory cache
 
@@ -44,12 +44,40 @@ export function recordStopOut(symbol) {
   console.log(`[Mercer StopCooldown] ${symbol} blocked from re-entry for ${COOLDOWN_MS / 3_600_000}h`);
 }
 
-/** Returns true if the symbol was stopped out within the last COOLDOWN_MS. */
-export function isInStopCooldown(symbol) {
-  const data = getData();
-  const ts   = data[symbol];
-  if (!ts) return false;
-  return (Date.now() - ts) < COOLDOWN_MS;
+/**
+ * Returns true if the symbol is still in stop-loss cooldown.
+ * Once the time window expires, also checks momentum — if both 1h and 24h are
+ * still negative, holds the block until momentum turns positive (prevents
+ * re-entering a token that is still in a downtrend after the base cooldown).
+ *
+ * @param {string} symbol
+ * @param {object} [market] - Optional market snapshot for momentum gate
+ */
+export function isInStopCooldown(symbol, market = null) {
+  const data      = getData();
+  const stoppedAt = data[symbol];
+  if (!stoppedAt) return false;
+
+  const elapsed = Date.now() - stoppedAt;
+
+  // Still within the base cooldown window — always blocked
+  if (elapsed < COOLDOWN_MS) return true;
+
+  // Base cooldown expired — apply momentum gate if market data available
+  if (market) {
+    const mkt  = market[symbol];
+    const ch1h  = mkt?.change1h  ?? null;
+    const ch24h = mkt?.change24h ?? null;
+    // Both timeframes still negative → token still declining, extend block
+    if (ch1h !== null && ch1h < 0 && ch24h !== null && ch24h < 0) {
+      return true;
+    }
+  }
+
+  // Cooldown fully expired and momentum has turned — clean up
+  delete data[symbol];
+  persist();
+  return false;
 }
 
 /**

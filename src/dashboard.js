@@ -203,6 +203,9 @@ function renderTable(portfolio, market = {}) {
     divider,
   ];
 
+  let totalPnlUsd = 0;
+  let totalPnlKnown = false;
+
   for (const h of holdings) {
     const ch       = market[h.token]?.change24h ?? null;
     const chColor  = ch == null ? 'grey-fg' : ch >= 0 ? 'green-fg' : 'red-fg';
@@ -210,8 +213,11 @@ function renderTable(portfolio, market = {}) {
 
     const ep       = entryPrices[h.token];
     const pnlPct   = ep && ep > 0 ? ((h.price - ep) / ep) * 100 : null;
+    const pnlUsd   = pnlPct != null ? (h.value * pnlPct) / (100 + pnlPct) : null;
     const pnlColor = pnlPct == null ? 'grey-fg' : pnlPct >= 0 ? 'green-fg' : 'red-fg';
-    const pnlStr   = pnlPct == null ? 'N/A' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+    const pnlStr   = pnlUsd == null ? 'N/A' : `${pnlUsd >= 0 ? '+' : ''}$${Math.abs(pnlUsd).toFixed(2)}`;
+
+    if (pnlUsd != null) { totalPnlUsd += pnlUsd; totalPnlKnown = true; }
 
     const row = [
       `{white-fg}${h.token}{/}`,
@@ -232,6 +238,9 @@ function renderTable(portfolio, market = {}) {
   const sPnlStr       = sessionPnlUsd == null ? ''
     : `${sessionPnlUsd >= 0 ? '+' : ''}${fmtUSD(sessionPnlUsd)} (${sessionPnlPct >= 0 ? '+' : ''}${sessionPnlPct.toFixed(2)}%)`;
 
+  const totalPnlColor = !totalPnlKnown ? 'grey-fg' : totalPnlUsd >= 0 ? 'green-fg' : 'red-fg';
+  const totalPnlStr   = totalPnlKnown ? `${totalPnlUsd >= 0 ? '+' : ''}$${Math.abs(totalPnlUsd).toFixed(2)}` : '';
+
   lines.push(divider);
   lines.push([
     padCol('{bold}TOTAL{/}',                 COL_W[0]),
@@ -239,7 +248,7 @@ function renderTable(portfolio, market = {}) {
     padCol('',                               COL_W[2]),
     padCol(`{bold}${fmtUSD(totalValue)}{/}`, COL_W[3]),
     padCol('{bold}100%{/}',                  COL_W[4]),
-    padCol('',                               COL_W[5]),
+    padCol(`{${totalPnlColor}}{bold}${totalPnlStr}{/}`, COL_W[5]),
     padCol('',                               COL_W[6]),
   ].join(COL_SEP));
 
@@ -342,14 +351,14 @@ function updateMarketBox(token, market) {
     for (const sym of heldTokens()) {
       const d = market[sym];
       if (!d) { lines.push(` {white-fg}${sym.padEnd(5)}{/}  {grey-fg}—{/}`); continue; }
-      const ch     = d.change24h ?? 0;
-      const color  = ch >= 0 ? 'green' : 'red';
-      const arrow  = ch >= 0 ? '▲' : '▼';
-      const chStr  = `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%`;
+      const ch     = d.change24h ?? null;
+      const color  = ch == null ? 'grey' : ch >= 0 ? 'green' : 'red';
+      const arrow  = ch == null ? '·' : ch >= 0 ? '▲' : '▼';
+      const chStr  = ch == null ? '' : `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%`;
       lines.push(
         ` {white-fg}{bold}${sym.padEnd(5)}{/}` +
         ` {white-fg}${fmtPrice(d.price).padEnd(12)}{/}` +
-        ` {${color}-fg}${arrow} ${chStr}{/}`
+        ` {${color}-fg}${arrow}${chStr ? ' ' + chStr : ''}{/}`
       );
     }
     solBox.setContent(lines.join('\n'));
@@ -558,13 +567,20 @@ function updateReasonDisplay(result, triggeredBy = null) {
         ? `${(t.fromAsset ?? '?')}→${(t.toAsset ?? '?')}`.padEnd(7)
         : (t.asset ?? '').padEnd(7);
       const amt   = (t.amountUsd != null ? fmtUSD(t.amountUsd) : '').padEnd(8);
+      // Derive fallback label from overall execution status when no per-trade status exists
+      const overallStatus = _ex?.status ?? '';
+      const fallbackLabel =
+        overallStatus === 'throttled'             ? 'throttled'
+        : overallStatus === 'skipped_low_confidence' ? 'low conf'
+        : overallStatus === 'skipped'             ? 'skipped'
+        : 'queued';
       let icon, color, label;
-      if      (t.status === 'executed') { icon = '✓'; color = 'green-fg'; label = 'on-chain'; }
-      else if (t.status === 'dry_run')  { icon = '~'; color = 'cyan-fg';  label = 'dry run';  }
+      if      (t.status === 'executed') { icon = '✓'; color = 'green-fg'; label = 'on-chain';    }
+      else if (t.status === 'dry_run')  { icon = '~'; color = 'cyan-fg';  label = 'dry run';     }
       else if (t.status === 'blocked')  { icon = '✗'; color = 'red-fg';   label = (t.reason ?? 'blocked').slice(0, 16); }
-      else if (t.status === 'failed')   { icon = '⚠'; color = 'red-fg';   label = 'failed';   }
-      else if (t.status === 'skipped')  { icon = '—'; color = 'white-fg'; label = 'skipped';  }
-      else                              { icon = '·'; color = isSwap ? 'cyan-fg' : t.type === 'buy' ? 'green-fg' : 'red-fg'; label = 'proposed'; }
+      else if (t.status === 'failed')   { icon = '⚠'; color = 'red-fg';   label = 'failed';      }
+      else if (t.status === 'skipped')  { icon = '—'; color = 'white-fg'; label = 'skipped';     }
+      else                              { icon = '·'; color = 'grey-fg';   label = fallbackLabel; }
       C1.push(` {${color}}{bold}${icon}{/} {${color}}${sign} ${side.padEnd(4)} ${asset} ${amt}{/}{white-fg}${label}{/}`);
     }
   } else {
@@ -572,6 +588,14 @@ function updateReasonDisplay(result, triggeredBy = null) {
   }
 
   C1.push(DIV);
+  if (lastTradeStats && lastTradeStats.total > 0) {
+    const { total, wins, winRate, avgGain, avgLoss } = lastTradeStats;
+    const wrColor = winRate >= 60 ? 'green-fg' : winRate >= 40 ? 'yellow-fg' : 'red-fg';
+    const gainStr = avgGain != null ? `{green-fg}+${avgGain.toFixed(1)}%{/}` : '';
+    const lossStr = avgLoss != null ? `{red-fg}${avgLoss.toFixed(1)}%{/}` : '';
+    C1.push(`{bold}PERFORMANCE{/}  {${wrColor}}${winRate}% win rate{/}  ${wins}/${total} trades  avg ${gainStr} / ${lossStr}`);
+    C1.push(DIV);
+  }
   C1.push('{bold}HISTORY{/}');
   for (const entry of [...localDecisionHistory].reverse()) {
     const ac  = ACTION_COLOR[entry.action] ?? 'white-fg';
@@ -730,6 +754,24 @@ function updateReasonDisplay(result, triggeredBy = null) {
   }
 }
 
+// ─── Market merge helper ──────────────────────────────────────────────────────
+// Ensures tokens priced via mint-lookup (micro-caps not in ecosystem map)
+// are present in the market snapshot so all dashboard sections show their data.
+
+function mergePortfolioIntoMarket(market, portfolio) {
+  for (const h of (portfolio?.holdings ?? [])) {
+    if (!h.token || h.price <= 0) continue;
+    if (!market[h.token]) {
+      // Token not in ecosystem map — seed from portfolio mint-price data
+      market[h.token] = { price: h.price, change24h: h.change24h ?? null, change1h: null };
+    } else if (market[h.token].change24h == null && h.change24h != null) {
+      // Token is in map but missing change data — fill in from portfolio
+      market[h.token].change24h = h.change24h;
+    }
+  }
+  return market;
+}
+
 // ─── API fetch ────────────────────────────────────────────────────────────────
 
 async function fetchJSON(url, opts = {}, timeoutMs = 15_000) {
@@ -874,6 +916,7 @@ let lastMandate          = null;
 let lastViolations       = [];
 let lastBlocked          = false;
 let lastMarketSnapshot   = null;
+let lastTradeStats       = null;
 let sessionCycles        = 0;
 let localDecisionHistory = [];
 let liveHistory          = [];   // in-memory chart data, appended every data refresh
@@ -1029,12 +1072,15 @@ async function doDataRefresh() {
 
     walletSource       = portfolio.source ?? 'mock';
     lastPortfolio      = portfolio;
-    lastMarketSnapshot = market;
-    updatePortfolioTable(portfolio, market);
-    updateMarketBox(selectedMarketToken, market);
+    lastMarketSnapshot = mergePortfolioIntoMarket(market, portfolio);
+    updatePortfolioTable(portfolio, lastMarketSnapshot);
+    updateMarketBox(selectedMarketToken, lastMarketSnapshot);
 
     const mandates = await fetchJSON(`${API_BASE}/mandates`);
     lastMandate    = mandates[MANDATE_PRESET];
+
+    const statsData = await fetchJSON(`${API_BASE}/stats`).catch(() => null);
+    if (statsData?.tradeStats) lastTradeStats = statsData.tradeStats;
 
     if (liveHistory.length === 0) {
       const h = await fetchJSON(`${API_BASE}/portfolio/history`);
@@ -1077,6 +1123,7 @@ async function doRefresh(force = false) {
 
     walletSource      = portfolio.source ?? 'mock';
     lastPortfolio     = portfolio;
+    mergePortfolioIntoMarket(market, portfolio);
     adaptiveThreshold = computeAdaptiveThreshold(market);
     updatePortfolioTable(portfolio, market);
     updateMarketBox(selectedMarketToken, market);
@@ -1326,6 +1373,7 @@ async function doChartRefresh() {
   if (!lastPortfolio) return;
   try {
     const market = await fetchJSON(`${API_BASE}/market`);
+    mergePortfolioIntoMarket(market, lastPortfolio);
 
     // Track per-token price history for individual token charts
     const now = new Date().toISOString();
@@ -1348,6 +1396,8 @@ async function doChartRefresh() {
     liveHistory.push({ timestamp: now, totalValueUsd: total });
     if (!sessionBaseline && total > 0) sessionBaseline = total;
     if (liveHistory.length > 300) liveHistory = liveHistory.slice(-300);
+    lastMarketSnapshot = market;
+    updateMarketBox(selectedMarketToken, market);
     updatePnlChart(liveHistory, market);
     screen.render();
   } catch { /* silent */ }

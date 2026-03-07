@@ -131,7 +131,7 @@ Use **buy** when deploying existing USDC cash into a new position.
 A swap trades fromAsset tokens → toAsset tokens directly via Jupiter. The amountUsd is the USD value of the position being exited from fromAsset.
 
 ## Decision Format
-You MUST respond with a single valid JSON object and nothing else. No prose, no markdown fences.
+CRITICAL: Your entire response MUST be a single valid JSON object. No prose before it, no prose after it, no markdown fences, no explanation. Start your response with { and end with }. If you write anything other than a JSON object, the system will crash.
 
 Schema:
 {
@@ -154,6 +154,49 @@ Schema:
 If action is "hold", trades array must be empty.
 If action is "alert", include a riskFlags entry describing the alert condition.
 Never recommend trades that violate the active mandate.`;
+
+// ─── Sector map ───────────────────────────────────────────────────────────────
+// Tags known Solana-ecosystem tokens by narrative sector.
+// Unknown tokens default to 'emerging' — still included in sector roll-up.
+
+const SECTOR_TAGS = {
+  // Layer 1
+  SOL: 'L1', ETH: 'L1', BTC: 'L1', SUI: 'L1', APT: 'L1', SEI: 'L1', NEAR: 'L1', AVAX: 'L1',
+  // DEX / DeFi
+  JUP: 'DEX', RAY: 'DEX', ORCA: 'DEX', DRIFT: 'DEX', MNGO: 'DEX', KAMINO: 'DEX', STEP: 'DEX',
+  // Meme
+  BONK: 'meme', WIF: 'meme', POPCAT: 'meme', MYRO: 'meme', BOME: 'meme', SAMO: 'meme',
+  SLERF: 'meme', PNUT: 'meme', FWOG: 'meme', MOODENG: 'meme', DOGE: 'meme', SHIB: 'meme',
+  PEPE: 'meme', FLOKI: 'meme', MEW: 'meme', RETARDIO: 'meme', GIGA: 'meme',
+  // AI / DePIN
+  RENDER: 'AI/DePIN', RNDR: 'AI/DePIN', HNT: 'AI/DePIN', IO: 'AI/DePIN', TAO: 'AI/DePIN',
+  FET: 'AI/DePIN', GOAT: 'AI/DePIN', ARC: 'AI/DePIN', ZEREBRO: 'AI/DePIN', AI16Z: 'AI/DePIN',
+  VIRTUAL: 'AI/DePIN', GRASS: 'AI/DePIN', WLD: 'AI/DePIN',
+  // Gaming
+  BEAM: 'gaming', IMX: 'gaming', GALA: 'gaming', PRIME: 'gaming',
+  // Oracle / Infrastructure
+  PYTH: 'infra', LINK: 'infra', JTO: 'infra', JITO: 'infra',
+  // Liquid staking
+  MSOL: 'liquid-stake', BSOL: 'liquid-stake', JSOL: 'liquid-stake',
+  // DeSci
+  BIO: 'DeSci',
+  // Stable
+  USDC: 'stable', USDT: 'stable', DAI: 'stable',
+};
+
+// ─── Trading session ──────────────────────────────────────────────────────────
+
+function tradingSession() {
+  const h = new Date().getUTCHours();
+  const day = new Date().getUTCDay(); // 0=Sun, 6=Sat
+  if (day === 0 || day === 6) return 'Weekend (lower liquidity, wider spreads)';
+  if (h >= 13 && h < 16) return 'US Open (high volatility, best liquidity)';
+  if (h >= 16 && h < 20) return 'US Afternoon (momentum continuation or reversal)';
+  if (h >= 20 && h < 24) return 'US Close / Overnight (declining volume)';
+  if (h >=  2 && h <  9) return 'Asian Session (lower volume, range-bound)';
+  if (h >=  9 && h < 13) return 'European Session (volume building, pre-US)';
+  return 'Off-hours (thin liquidity)';
+}
 
 /**
  * Builds the user-turn context message from live portfolio + market state.
@@ -234,7 +277,27 @@ export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_
   const marketPulse = [
     `REGIME: ${regime} — ${regimeNote}`,
     solData ? `SOL: ${sol1h >= 0 ? '+' : ''}${sol1h.toFixed(2)}% (1h)  ${sol24h >= 0 ? '+' : ''}${sol24h.toFixed(2)}% (24h)${sol7d !== null ? `  ${sol7d >= 0 ? '+' : ''}${sol7d.toFixed(2)}% (7d)` : ''}` : '',
+    `Session: ${tradingSession()}`,
   ].filter(Boolean).join('\n');
+
+  // ── Sector performance summary ─────────────────────────────────────────────
+  const sectorBuckets = {};
+  for (const [sym, data] of Object.entries(market)) {
+    if (data.change24h == null) continue;
+    const sector = SECTOR_TAGS[sym] ?? 'emerging';
+    if (!sectorBuckets[sector]) sectorBuckets[sector] = [];
+    sectorBuckets[sector].push(data.change24h);
+  }
+  const sectorSummary = Object.entries(sectorBuckets)
+    .filter(([, vals]) => vals.length >= 2)
+    .map(([sector, vals]) => {
+      const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+      return { sector, avg, count: vals.length };
+    })
+    .sort((a, b) => b.avg - a.avg)
+    .map(({ sector, avg, count }) =>
+      `  ${sector.padEnd(12)} ${avg >= 0 ? '+' : ''}${avg.toFixed(1)}%  (${count} tokens)`
+    );
 
   // ── Momentum signal ────────────────────────────────────────────────────────
   const allTokens = Object.entries(market)
@@ -383,6 +446,9 @@ ${trigger}
 ## Market Regime (${universeSize} tokens analyzed)
 ${marketPulse}
 
+## Sector Performance (24h avg)
+${sectorSummary.join('\n') || '  No sector data'}
+
 ## Momentum Leaders — top 15 by 1h, not held (★★★ = strong conviction)
 ${topMovers.join('\n') || '  No data'}
 
@@ -425,9 +491,9 @@ Profit Ladder:   ${mandate.takeProfitLadder?.map((r, i) => `rung ${i + 1}: sell 
 Max Drawdown:    ${mandate.maxDrawdownPct}%
 SOL Reserve:     SOL is GAS ONLY — never propose buying or selling SOL. It is not a tradeable position.
 Min Market Cap:  $${mandate.minMarketCapUsd ? (mandate.minMarketCapUsd / 1e6).toFixed(0) + 'M' : 'none'} (tokens below this are blocked)
-Min Volume:      $${mandate.minVolume24hUsd ? (mandate.minVolume24hUsd / 1e6).toFixed(0) + 'M' : 'none'}/day (illiquid tokens blocked for buys)
+Min Volume:      ${mandate.minVolume24hUsd ? (mandate.minVolume24hUsd >= 1_000_000 ? `$${(mandate.minVolume24hUsd/1e6).toFixed(1)}M` : `$${(mandate.minVolume24hUsd/1000).toFixed(0)}K`) : 'none'}/day (illiquid tokens blocked for buys)
 ${mandate.notes ? `Notes: ${mandate.notes}` : ''}
 ${stopCooldowns.length > 0 ? `\n## Stop-Loss Re-Entry Cooldowns (DO NOT BUY THESE)\n${stopCooldowns.map(c => `  - ${c.symbol}: blocked for ${c.minsRemaining} more minutes after recent stop-out`).join('\n')}` : ''}
 ${blockedBuys.length > 0 ? `\n## Permanently Blocked Buys (NEVER BUY OR SWAP INTO THESE)\n${blockedBuys.map(s => `  - ${s}`).join('\n')}` : ''}
-Analyze this state and return your decision as JSON.`;
+Analyze this state and return your decision as a raw JSON object. Start with { and end with }. No other text.`;
 }
