@@ -110,12 +110,38 @@ async function executeTrade(trade, market, jupiterApi) {
   if (amountUsd > maxTradeUsd) {
     console.log(`[Mercer Executor] Trade trimmed — $${amountUsd} → $${maxTradeUsd} (MAX_TRADE_USD cap)`);
     amountUsd = maxTradeUsd;
-    // Recalculate rawAmount with the trimmed value
     if (type === 'buy') {
       rawAmount = Math.round(amountUsd * Math.pow(10, USDC_DECIMALS));
     } else {
       const price = market[asset]?.price;
       if (price) rawAmount = Math.round((amountUsd / price) * Math.pow(10, assetDecimals));
+    }
+  }
+
+  // ── SOL sell gas reserve — never sell lamports needed to pay fees ─────────
+  // When selling SOL (native token), Jupiter draws from the same lamport balance
+  // used for gas. If rawAmount >= actual balance, the tx simulation fails with
+  // "insufficient lamports". Fetch live balance and cap to (balance - gas reserve).
+  if (type === 'sell' && asset === 'SOL' && !DRY_RUN && process.env.SOLANA_RPC_URL) {
+    try {
+      const minSolForGas   = parseFloat(process.env.MIN_SOL_FOR_GAS) || 0.01;
+      const gasReserve     = Math.ceil(minSolForGas * 1e9); // lamports
+      const keypair        = loadKeypair();
+      const connection     = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+      const liveBalance    = await connection.getBalance(keypair.publicKey);
+      const maxSellLamports = liveBalance - gasReserve;
+      if (maxSellLamports <= 0) {
+        const msg = `Insufficient SOL to sell — balance ${(liveBalance / 1e9).toFixed(4)} SOL is at or below gas reserve`;
+        console.warn(`[Mercer Executor] BLOCKED — ${msg}`);
+        return { ...trade, status: 'blocked', reason: msg };
+      }
+      if (rawAmount > maxSellLamports) {
+        console.log(`[Mercer Executor] SOL sell capped — ${rawAmount} → ${maxSellLamports} lamports (gas reserve: ${minSolForGas} SOL)`);
+        rawAmount = maxSellLamports;
+        amountUsd = parseFloat(((rawAmount / 1e9) * (market['SOL']?.price ?? 0)).toFixed(2));
+      }
+    } catch (err) {
+      console.warn(`[Mercer Executor] SOL balance check skipped: ${err.message}`);
     }
   }
 
