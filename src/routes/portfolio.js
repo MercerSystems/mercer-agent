@@ -5,7 +5,7 @@
 
 import { Router } from 'express';
 import { fetchWalletPortfolio } from '../wallet/solana.js';
-import { fetchSolanaMarketMap } from '../market/solana-market.js';
+import { fetchSolanaMarketMap, fetchPricesByMint } from '../market/solana-market.js';
 import { DEFAULT_BASE_PORTFOLIO } from '../agent/portfolio.js';
 import { recordSnapshot, getHistory } from '../history.js';
 
@@ -31,16 +31,38 @@ export async function getPortfolio() {
   const market = await fetchSolanaMarketMap(150);
 
   const holdings = basePortfolio.holdings.map(h => {
-    const price = market[h.symbol]?.price ?? 0;
+    const sym   = h.symbol;
+    const price = (sym ? market[sym]?.price : null) ?? 0;
     const value = price * h.quantity;
-    return { token: h.symbol, balance: h.quantity, price, value };
+    return { token: sym, balance: h.quantity, price, value, _mint: h.mint, _unknown: h.unknown };
   });
 
-  const holdingsValue = holdings.reduce((sum, h) => sum + h.value, 0);
+  // Auto-price any holding with price=0 using CoinGecko's mint-based endpoint.
+  // This handles tokens not in the ecosystem map (new buys, unlisted tokens, etc.)
+  const needsPrice = holdings.filter(h => h.price === 0 && h._mint);
+  if (needsPrice.length > 0) {
+    const mintPrices = await fetchPricesByMint(needsPrice.map(h => h._mint));
+    for (const h of needsPrice) {
+      const p = mintPrices[h._mint];
+      if (!p) continue;
+      h.price = p.usd ?? 0;
+      h.value = h.price * h.balance;
+      // If symbol was unknown, label with truncated mint so it shows in dashboard
+      if (!h.token && h._mint) h.token = h._mint.slice(0, 6) + '…';
+    }
+  }
+
+  // Strip internal fields before returning
+  for (const h of holdings) { delete h._mint; delete h._unknown; }
+
+  // Filter out any holding that still has no price and no recognised symbol
+  const pricedHoldings = holdings.filter(h => h.token && (h.value > 0 || h.token === 'USDC'));
+
+  const holdingsValue = pricedHoldings.reduce((sum, h) => sum + h.value, 0);
   const totalValue    = holdingsValue + (basePortfolio.cashUsd ?? 0);
 
   recordSnapshot(totalValue);
-  return { totalValue, change24h: null, holdings, source };
+  return { totalValue, change24h: null, holdings: pricedHoldings, source };
 }
 
 // GET /portfolio

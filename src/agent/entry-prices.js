@@ -66,17 +66,21 @@ export function applyEntryPrices(holdings, market, persisted) {
   const updated = { ...persisted };
 
   const result = holdings.map(h => {
-    const existing = h.entryPrice && h.entryPrice > 0 ? h.entryPrice : null;
-    const stored   = persisted[h.symbol] ?? null;
-    const fallback = market[h.symbol]?.price ?? 0;
+    const existing = h.entryPrice > 0 ? h.entryPrice : null;
+    const stored   = persisted[h.symbol] > 0 ? persisted[h.symbol] : null; // ignore saved 0s
+    const fallback = market[h.symbol]?.price > 0 ? market[h.symbol].price : null;
 
-    const entryPrice = existing ?? stored ?? fallback;
+    const entryPrice = existing ?? stored ?? fallback ?? 0;
 
-    if (!updated[h.symbol]) {
-      updated[h.symbol] = entryPrice;
-      if (!existing && !stored) {
-        console.warn(`[Mercer] Entry price for ${h.symbol} seeded from market ($${entryPrice}) — stop-loss tracking starts now.`);
+    // Only persist if we have a real price, and only once per symbol
+    if (updated[h.symbol] == null) {
+      if (entryPrice > 0) {
+        updated[h.symbol] = entryPrice;
+        if (!existing && !stored) {
+          console.log(`[Mercer] Entry price for ${h.symbol} seeded from market ($${entryPrice.toFixed(6)})`);
+        }
       }
+      // If price is still 0, silently wait — will seed on next cycle when price is available
     }
 
     return { ...h, entryPrice };

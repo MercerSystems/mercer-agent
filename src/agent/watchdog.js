@@ -74,9 +74,9 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
         basePortfolio = DEFAULT_BASE_PORTFOLIO;
       }
 
-      // Use the same ecosystem market map Claude uses — covers any token Mercer may hold,
-      // not just the hardcoded COINGECKO_IDS list. Served from cache (120s TTL) so no extra CoinGecko calls.
-      const market = await fetchSolanaMarketMap(150);
+      // Use the full ecosystem market map — 400 tokens for broad momentum scanning.
+      // Served from cache (120s TTL) so no extra CoinGecko calls vs reasoning cycle.
+      const market = await fetchSolanaMarketMap(400);
       if (!market || Object.keys(market).length === 0) return;
 
       const persisted = loadEntryPrices();

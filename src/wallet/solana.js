@@ -7,13 +7,13 @@
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { resolveMint } from '../market/token-registry.js';
 
-const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const TOKEN_PROGRAM_ID   = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const TOKEN_2022_PROGRAM = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 
 /**
  * Fetches all on-chain token balances for a Solana wallet.
- * Returns every token with a non-zero balance, resolved to a symbol via
- * the Jupiter verified token list. Unknown tokens (not in Jupiter's list)
- * are skipped since Mercer can't price or trade them.
+ * Queries both the classic SPL Token program and Token-2022 so tokens like
+ * BIO (which use the newer program) are always included.
  *
  * @param {string} walletAddress - Base58-encoded Solana wallet address
  * @param {string} rpcUrl        - Solana RPC endpoint URL
@@ -27,11 +27,12 @@ export async function fetchWalletPortfolio(walletAddress, rpcUrl) {
   const lamports   = await connection.getBalance(pubkey);
   const solBalance = lamports / LAMPORTS_PER_SOL;
 
-  // Fetch all SPL token accounts in one call
-  const { value: tokenAccounts } = await connection.getParsedTokenAccountsByOwner(
-    pubkey,
-    { programId: TOKEN_PROGRAM_ID }
-  );
+  // Fetch token accounts from both Token programs in parallel
+  const [{ value: classicAccounts }, { value: t22Accounts }] = await Promise.all([
+    connection.getParsedTokenAccountsByOwner(pubkey, { programId: TOKEN_PROGRAM_ID }),
+    connection.getParsedTokenAccountsByOwner(pubkey, { programId: TOKEN_2022_PROGRAM }),
+  ]);
+  const tokenAccounts = [...classicAccounts, ...t22Accounts];
 
   // Resolve each non-zero token account to a symbol
   const splHoldings = [];
@@ -44,12 +45,13 @@ export async function fetchWalletPortfolio(walletAddress, rpcUrl) {
       if (!uiAmount || uiAmount <= 0) return; // skip zero balances
 
       const tokenMeta = resolveMint(mint);
-      if (!tokenMeta) return; // skip unknown / unverified tokens
-
+      // Include unknown tokens — portfolio route will price them by mint via CoinGecko
       splHoldings.push({
-        symbol:     tokenMeta.symbol,
+        symbol:     tokenMeta?.symbol ?? null, // null = unrecognised, resolved later
+        mint,                                  // always carry raw mint for price fallback
         quantity:   uiAmount,
         entryPrice: null,
+        unknown:    !tokenMeta,
       });
     })
   );

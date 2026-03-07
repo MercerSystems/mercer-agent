@@ -29,20 +29,22 @@ export const MANDATE_PRESETS = {
   },
   moderate: {
     riskTier: 'moderate',
-    maxPositionPct:   35,
-    stopLossPct:      20,
-    trailingStopPct:  10,
-    takeProfitPct:    40,
+    maxPositionPct:      35,
+    stopLossPct:         15,   // standard stop for mid/large cap
+    microCapStopLossPct: 10,   // tighter stop for tokens < $5M market cap
+    microCapThresholdUsd: 5_000_000,
+    trailingStopPct:     10,
+    takeProfitPct:       60,
     takeProfitLadder: [
       { pct: 12, sellFraction: 0.33 },
-      { pct: 25, sellFraction: 0.33 },
-      { pct: 40, sellFraction: 0.34 },
+      { pct: 30, sellFraction: 0.33 },
+      { pct: 60, sellFraction: 0.34 },
     ],
     maxDrawdownPct:   25,
-    minCashPct:       20,         // Always keep ≥20% of portfolio as USDC dry powder
-    minMarketCapUsd:  15_000_000, // Only trade tokens with >$15M market cap
-    minVolume24hUsd:  5_000_000,  // Only trade tokens with >$5M daily volume
-    notes: 'Momentum trader. Fast entries, fast exits — redeploy profits quickly. Small-cap Solana tokens with strong momentum. Never overstay a position.',
+    minCashPct:       20,
+    minMarketCapUsd:  1_000_000,
+    minVolume24hUsd:    500_000,
+    notes: 'Small-cap momentum discovery. Primary focus: micro and small-cap Solana tokens ($1M–$20M) gaining traction. Fast entries, fast exits. Build the portfolio through asymmetric small-cap wins — shift to large caps once portfolio exceeds $2K.',
   },
   aggressive: {
     riskTier: 'aggressive',
@@ -64,6 +66,7 @@ export const MANDATE_PRESETS = {
 };
 
 import { isInStopCooldown } from './stop-cooldown.js';
+import { isBuyBlocked } from './blocked-buys.js';
 
 /**
  * Checks a Claude-generated decision against the active mandate.
@@ -100,17 +103,20 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
   const approvedTrades = [];
 
   for (const trade of decision.trades ?? []) {
-    const symbol = trade.asset?.toUpperCase();
+    const isSwap   = trade.type === 'swap';
+    // For buy/sell: symbol is trade.asset. For swap: check toAsset (entry side) and fromAsset (exit side).
+    const symbol     = isSwap ? trade.toAsset?.toUpperCase()   : trade.asset?.toUpperCase();
+    const fromSymbol = isSwap ? trade.fromAsset?.toUpperCase() : null;
     let tradeBlocked = false;
 
     // 2a-0. SOL is gas-only — never a tradeable position
-    if (symbol === 'SOL') {
+    if (symbol === 'SOL' || fromSymbol === 'SOL') {
       violations.push(`BLOCKED ${trade.type}: SOL is reserved for gas fees and is not a tradeable position.`);
       tradeBlocked = true;
     }
 
-    // 2a. Market cap check
-    if (mandate.minMarketCapUsd && symbol !== 'USDC') {
+    // 2a. Market cap check — applied to the token being entered (symbol / toAsset)
+    if (!tradeBlocked && mandate.minMarketCapUsd && symbol !== 'USDC') {
       const cap = market[symbol]?.marketCapUsd;
       if (cap != null && cap < mandate.minMarketCapUsd) {
         violations.push(
@@ -120,28 +126,38 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
       }
     }
 
-    // 2b. Volume floor check (buys only) — prevents buying illiquid tokens
-    if (!tradeBlocked && trade.type === 'buy' && mandate.minVolume24hUsd && symbol !== 'USDC') {
+    // 2b. Volume floor check (buys and swaps) — prevents entering illiquid tokens
+    if (!tradeBlocked && (trade.type === 'buy' || isSwap) && mandate.minVolume24hUsd && symbol !== 'USDC') {
       const vol = market[symbol]?.volume24hUsd;
       if (vol != null && vol < mandate.minVolume24hUsd) {
         violations.push(
-          `BLOCKED buy: ${symbol} 24h volume $${(vol / 1e6).toFixed(1)}M below ${(mandate.minVolume24hUsd / 1e6).toFixed(0)}M minimum.`
+          `BLOCKED ${trade.type}: ${symbol} 24h volume $${(vol / 1e6).toFixed(1)}M below ${(mandate.minVolume24hUsd / 1e6).toFixed(0)}M minimum.`
         );
         tradeBlocked = true;
       }
     }
 
     // 2c. Stop-loss re-entry cooldown — prevents buying back a recently stopped-out token
-    if (!tradeBlocked && trade.type === 'buy' && symbol !== 'USDC') {
+    if (!tradeBlocked && (trade.type === 'buy' || isSwap) && symbol !== 'USDC') {
       if (isInStopCooldown(symbol)) {
         violations.push(
-          `BLOCKED buy: ${symbol} is in stop-loss re-entry cooldown — too soon to re-enter after recent stop-out.`
+          `BLOCKED ${trade.type}: ${symbol} is in stop-loss re-entry cooldown — too soon to re-enter after recent stop-out.`
         );
         tradeBlocked = true;
       }
     }
 
-    // 2d. Cash floor check — ensure minCashPct is preserved after the buy
+    // 2c-2. Permanent buy block — user-defined symbols that should never be bought
+    if (!tradeBlocked && (trade.type === 'buy' || isSwap) && symbol !== 'USDC') {
+      if (isBuyBlocked(symbol)) {
+        violations.push(
+          `BLOCKED ${trade.type}: ${symbol} is on the permanent buy block list (data/blocked-buys.json).`
+        );
+        tradeBlocked = true;
+      }
+    }
+
+    // 2d. Cash floor check — only applies to buys (swaps don't spend USDC)
     if (!tradeBlocked && trade.type === 'buy' && mandate.minCashPct) {
       const cashFloor    = (mandate.minCashPct / 100) * portfolio.totalValueUsd;
       const availableCash = (portfolio.cashUsd ?? 0) - cashFloor;
@@ -159,8 +175,8 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
       }
     }
 
-    // 2f. Position size check (only for buys)
-    if (!tradeBlocked && trade.type === 'buy') {
+    // 2f. Position size check (buys and swaps — check the token being entered)
+    if (!tradeBlocked && (trade.type === 'buy' || isSwap)) {
       const holdingAfterBuy = (portfolio.holdings.find(h => h.symbol === symbol)?.valueUsd ?? 0) + trade.amountUsd;
       const newAllocationPct = (holdingAfterBuy / portfolio.totalValueUsd) * 100;
 
@@ -170,12 +186,12 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
 
         if (maxBuy <= 0) {
           violations.push(
-            `BLOCKED buy: ${symbol} already at or above max allocation of ${mandate.maxPositionPct}%.`
+            `BLOCKED ${trade.type}: ${symbol} already at or above max allocation of ${mandate.maxPositionPct}%.`
           );
           tradeBlocked = true;
         } else {
           violations.push(
-            `TRIMMED buy: ${symbol} reduced from $${trade.amountUsd} to $${maxBuy.toFixed(2)} to respect ${mandate.maxPositionPct}% max allocation.`
+            `TRIMMED ${trade.type}: ${symbol} reduced from $${trade.amountUsd} to $${maxBuy.toFixed(2)} to respect ${mandate.maxPositionPct}% max allocation.`
           );
           trade.amountUsd = parseFloat(maxBuy.toFixed(2));
           trade.reason += ` [trimmed by mandate]`;
@@ -183,19 +199,29 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
       }
     }
 
-    // 2g. Stop-loss trigger check (auto-sell if PnL below threshold)
+    // 2g. Stop-loss trigger check — applies to the asset being exited
+    // For buy/sell use symbol; for swap use fromSymbol (the exit side)
     if (!tradeBlocked) {
-      const holding = portfolio.holdings.find(h => h.symbol === symbol);
-      if (holding && holding.pnlPct <= -mandate.stopLossPct) {
-        violations.push(
-          `STOP-LOSS: ${symbol} PnL of ${holding.pnlPct.toFixed(2)}% breached ${-mandate.stopLossPct}% threshold.`
-        );
-        // Force a sell if not already selling
-        if (trade.type !== 'sell') {
-          violations.push(`AUTO-CONVERTED to sell order for ${symbol} per stop-loss rule.`);
-          trade.type = 'sell';
-          trade.amountUsd = holding.valueUsd;
-          trade.reason = `Mandatory stop-loss exit at ${holding.pnlPct.toFixed(2)}% PnL`;
+      const exitSymbol = isSwap ? fromSymbol : symbol;
+      const holding = portfolio.holdings.find(h => h.symbol === exitSymbol);
+      if (holding) {
+        const cap        = market[exitSymbol]?.marketCapUsd ?? Infinity;
+        const isMicroCap = mandate.microCapThresholdUsd && cap < mandate.microCapThresholdUsd;
+        const stopPct    = isMicroCap && mandate.microCapStopLossPct
+          ? mandate.microCapStopLossPct
+          : mandate.stopLossPct;
+
+        if (holding.pnlPct <= -stopPct) {
+          violations.push(
+            `STOP-LOSS: ${exitSymbol} PnL of ${holding.pnlPct.toFixed(2)}% breached ${-stopPct}% threshold${isMicroCap ? ' (micro-cap)' : ''}.`
+          );
+          if (trade.type === 'buy') {
+            violations.push(`AUTO-CONVERTED to sell order for ${exitSymbol} per stop-loss rule.`);
+            trade.type = 'sell';
+            trade.asset = exitSymbol;
+            trade.amountUsd = holding.valueUsd;
+            trade.reason = `Mandatory stop-loss exit at ${holding.pnlPct.toFixed(2)}% PnL`;
+          }
         }
       }
     }
@@ -249,10 +275,24 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
  * @param {object} mandate
  * @returns {string[]} List of triggered stop-loss messages
  */
-export function scanStopLosses(portfolio, mandate) {
+export function scanStopLosses(portfolio, mandate, market = {}) {
   return portfolio.holdings
-    .filter(h => h.pnlPct <= -mandate.stopLossPct)
-    .map(h => `${h.symbol}: ${h.pnlPct.toFixed(2)}% (threshold: -${mandate.stopLossPct}%)`);
+    .filter(h => {
+      const cap        = market[h.symbol]?.marketCapUsd ?? Infinity;
+      const isMicroCap = mandate.microCapThresholdUsd && cap < mandate.microCapThresholdUsd;
+      const stopPct    = isMicroCap && mandate.microCapStopLossPct
+        ? mandate.microCapStopLossPct
+        : mandate.stopLossPct;
+      return h.pnlPct <= -stopPct;
+    })
+    .map(h => {
+      const cap        = market[h.symbol]?.marketCapUsd ?? Infinity;
+      const isMicroCap = mandate.microCapThresholdUsd && cap < mandate.microCapThresholdUsd;
+      const stopPct    = isMicroCap && mandate.microCapStopLossPct
+        ? mandate.microCapStopLossPct
+        : mandate.stopLossPct;
+      return `${h.symbol}: ${h.pnlPct.toFixed(2)}% (threshold: -${stopPct}%${isMicroCap ? ', micro-cap' : ''})`;
+    });
 }
 
 /**

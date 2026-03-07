@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Router } from 'express';
-import { reason, recordDecision } from '../agent/reasoning.js';
+import { reason, recordDecision, getRecentDecisions } from '../agent/reasoning.js';
 import { MANDATE_PRESETS, enforceMandate, scanStopLosses, scanTakeProfits } from '../agent/mandate.js';
 import { loadTrailingData, saveTrailingData, updateHighWaterMarks, scanTrailingStops, scanProfitLadder, clearSymbolState } from '../agent/trailing-stops.js';
 import { fetchSolanaMarketMap } from '../market/solana-market.js';
@@ -16,6 +16,8 @@ import { executeDecision } from '../executor.js';
 import { recordSnapshot } from '../history.js';
 import { sendAlert, stopLossAlertText, takeProfitAlertText, tradeAlertText } from '../notify.js';
 import { getActiveCooldowns } from '../agent/stop-cooldown.js';
+import { getBlockedBuys } from '../agent/blocked-buys.js';
+import { getSpikeRatio } from '../market/volume-tracker.js';
 
 const { SOLANA_RPC_URL, WALLET_ADDRESS } = process.env;
 
@@ -68,12 +70,17 @@ router.post('/', async (req, res, next) => {
       basePortfolio = DEFAULT_BASE_PORTFOLIO;
     }
 
-    // Fetch the top 150 Solana ecosystem tokens dynamically — no hardcoded list.
-    // Claude sees the full market and picks the best opportunities.
+    // Fetch up to 400 Solana ecosystem tokens (2 pages × 250) — full universe for Claude.
+    // Page 2 is cached independently; first cycle may have ~250, subsequent cycles up to ~400.
     let market;
     try {
-      market = await fetchSolanaMarketMap(150);
-      // USDC is always included by fetchSolanaMarketMap (never filtered as stablecoin)
+      market = await fetchSolanaMarketMap(400);
+      // Augment each token with its volume spike ratio (current vs rolling baseline)
+      for (const [symbol, data] of Object.entries(market)) {
+        if (data.volume24hUsd) {
+          data.spikeRatio = getSpikeRatio(symbol, data.volume24hUsd);
+        }
+      }
     } catch (err) {
       return next(Object.assign(new Error(err.message), { status: 400 }));
     }
@@ -116,7 +123,7 @@ router.post('/', async (req, res, next) => {
     trailingData = updateHighWaterMarks(livePortfolio.holdings, market, trailingData);
 
     // ── Pre-flight stop-loss check — bypass Claude if thresholds are breached ──
-    const triggeredStopLosses = scanStopLosses(livePortfolio, mandate);
+    const triggeredStopLosses = scanStopLosses(livePortfolio, mandate, market);
     if (triggeredStopLosses.length > 0) {
       console.warn(`[Mercer] Stop-loss bypass triggered: ${triggeredStopLosses.join('; ')}`);
 
@@ -278,6 +285,18 @@ router.post('/', async (req, res, next) => {
     // Save updated HWMs before handing off to Claude
     saveTrailingData(trailingData);
 
+    // Extract recent trades from decision history so Claude avoids repeating itself
+    const recentTrades = getRecentDecisions(10)
+      .flatMap(d => (d.trades ?? []).map(t => ({
+        time:      d.timestamp,
+        type:      t.type,
+        asset:     t.asset ?? null,
+        fromAsset: t.fromAsset ?? null,
+        toAsset:   t.toAsset ?? null,
+        amountUsd: t.amountUsd,
+      })))
+      .slice(-12); // last 12 trades across the last 10 decisions
+
     // Run reasoning loop
     const cycleStart = Date.now();
     const { decision, violations, blocked, usage } = await reason({
@@ -287,6 +306,8 @@ router.post('/', async (req, res, next) => {
       trigger,
       trailingData,
       stopCooldowns:  getActiveCooldowns(),
+      blockedBuys:    getBlockedBuys(),
+      recentTrades,
     });
     recordCycle(Date.now() - cycleStart);
 

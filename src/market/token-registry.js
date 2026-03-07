@@ -63,6 +63,10 @@ const CORE_TOKENS = {
   SKR:    { mint: 'SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3',   decimals: 6 },
   PIPPIN: { mint: 'Dfh5DzRgSvvCFDoYc2ciTkMrbDfRKybA4SoFbPmApump',  decimals: 6 },
   '9BIT': { mint: 'HmMubgKx91Tpq3jmfcKQwsv5HrErqnCTTRJMB6afFR2u', decimals: 9 },
+  AUDIO:  { mint: '9LzCMqDgTKYz9Drzqnpgee3SGa89up3a247ypMj2xrqM',  decimals: 8 },
+  BAN:    { mint: '9PR7nCP9DpcUotnDPVLUBUZKu5WAYkwrCUx9wDnSpump',  decimals: 6 },
+  WAR:    { mint: '8opvqaWysX1oYbXuTL8PHaoaTiXD69VFYAX4smPebonk',  decimals: 6 },
+  BIO:    { mint: 'bioJ9JTqW62MLz7UKHU69gtKhPpGi1BQhccj2kmSvUJ',   decimals: 9 },
 };
 
 // Persistent cache: coingeckoId -> { mint, decimals, symbol, resolvedAt }

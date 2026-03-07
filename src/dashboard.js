@@ -82,15 +82,15 @@ const pnlChart = grid.set(4, 8, 3, 4, contrib.line, {
 });
 
 const reasonBox = grid.set(7, 0, 4, 12, blessed.box, {
-  label:        ' Claude Decisions',
+  label:        ' ◈  Claude Decisions  ◈ ',
   tags:         true,
   keys:         true,
   vi:           true,
-  border:       { type: 'line', fg: 'blue' },
+  border:       { type: 'line', fg: 'cyan' },
   padding:      { top: 0, left: 2 },
   scrollable:   true,
   alwaysScroll: false,
-  scrollbar:    { ch: '▐', style: { fg: 'blue', bg: 'black' } },
+  scrollbar:    { ch: '▐', style: { fg: 'cyan', bg: 'black' } },
   content:      'Waiting for first reasoning cycle...',
   style:        { fg: 'white', selected: { bg: 'default' } },
 });
@@ -154,6 +154,26 @@ function visLen(s) {
 // Right-pad a (possibly tag-containing) string to a fixed visible width
 function padCol(s, width) {
   return s + ' '.repeat(Math.max(0, width - visLen(s)));
+}
+
+// Word-wrap a plain string into lines of at most `width` visible chars
+function wordWrap(text, width) {
+  if (!text) return [''];
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    if (!current) {
+      current = word;
+    } else if (current.length + 1 + word.length <= width) {
+      current += ' ' + word;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [''];
 }
 
 // ─── Table + watermark renderer ───────────────────────────────────────────────
@@ -455,6 +475,8 @@ function updatePnlChart(history, market = {}) {
 }
 
 function updateReasonDisplay(result, triggeredBy = null) {
+  lastReasonResult  = result;
+  lastReasonTrigger = triggeredBy;
   const { decision, violations, blocked, execution, stopLossBypass, takeProfitBypass } = result;
 
   const ACTION_COLOR = {
@@ -469,60 +491,91 @@ function updateReasonDisplay(result, triggeredBy = null) {
   const nDry       = execTrades.filter(t => t.status === 'dry_run').length;
   const nFail      = execTrades.filter(t => t.status === 'failed' || t.status === 'blocked').length;
 
-  const execSummary = execTrades.length > 0
-    ? (nDone > 0 ? `  {green-fg}✓ ${nDone} on-chain{/}` : '') +
-      (nDry  > 0 ? `  {cyan-fg}~ ${nDry} dry run{/}` : '') +
-      (nFail > 0 ? `  {red-fg}✗ ${nFail} failed{/}` : '')
-    : execution?.status === 'throttled'             ? '  ⏸ throttled'
-    : execution?.status === 'skipped_low_confidence' ? '  ⏸ low confidence'
+  // ── Column widths — dynamic, fills terminal, C2 center = screen center ──────
+  const usable = Math.max(90, screen.width - 4); // inner box width
+  const SEP    = ' {cyan-fg}│{/} ';              // 3 visible chars
+  const cW     = Math.floor((usable - 6) / 3);   // equal thirds
+
+  const DIV = '{cyan-fg}' + '─'.repeat(cW) + '{/}';
+
+  // Exec outcome pills (compact, for C1 header line)
+  const execPills = execTrades.length > 0
+    ? [
+        nDone > 0 ? `{green-fg}✓ ${nDone} exec{/}` : '',
+        nDry  > 0 ? `{cyan-fg}~ ${nDry} dry{/}`    : '',
+        nFail > 0 ? `{red-fg}✗ ${nFail} fail{/}`   : '',
+      ].filter(Boolean).join('  ')
+    : execution?.status === 'throttled'              ? '{white-fg}⏸ throttled{/}'
+    : execution?.status === 'skipped_low_confidence' ? '{white-fg}⏸ low conf{/}'
     : '';
 
   const bypassTag = stopLossBypass  ? '  {red-fg}⚡ STOP-LOSS{/}'
                   : takeProfitBypass ? '  {green-fg}✓ TAKE-PROFIT{/}'
                   : '';
-  const trigTag   = triggeredBy ? `  ↳ ${triggeredBy}` : '';
 
-  // ── Build LEFT column lines ───────────────────────────────────────────────
-  const L = [];
-  const LW = 88; // left column visual width (separator at col 90)
+  // ── C1 — DECISION ─────────────────────────────────────────────────────────
+  const C1 = [];
 
-  // Header
-  L.push(
-    `{bold}{${actionColor}}${(decision.action ?? '?').toUpperCase()}{/}` +
-    `  ${bar} {bold}${conf}%{/}` +
-    (blocked ? '  {red-fg}⛔ BLOCKED{/}' : '') +
-    bypassTag + execSummary + trigTag
-  );
-  L.push('─'.repeat(LW));
+  // Big action line
+  C1.push(`{bold}{${actionColor}}${(decision.action ?? '?').toUpperCase()}{/}` +
+          `  ${bar}  {bold}${conf}%{/}` +
+          (blocked ? '  {red-fg}⛔ BLOCKED{/}' : '') + bypassTag);
 
-  // Rationale clipped to LW
-  const rat = decision.rationale ?? 'N/A';
-  L.push(rat.length > LW ? rat.slice(0, LW - 1) + '…' : rat);
-  L.push('');
+  // Trigger / exec outcome
+  const metaParts = [
+    triggeredBy ? `{white-fg}↳ ${triggeredBy}{/}` : '',
+    execPills,
+  ].filter(Boolean);
+  if (metaParts.length) C1.push(metaParts.join('  '));
 
-  // Trade table
+  C1.push(DIV);
+  C1.push('{bold}TRADES{/}');
+
+  // Recent decisions — add now so this cycle is included
+  localDecisionHistory.push({
+    action: decision.action ?? '?', confidence: conf,
+    timestamp: new Date(), triggeredBy: triggeredBy ?? 'manual',
+  });
+  if (localDecisionHistory.length > 6) localDecisionHistory.shift();
+
   const tradesToShow = execTrades.length > 0 ? execTrades : (decision.trades ?? []);
   if (tradesToShow.length > 0) {
     for (const t of tradesToShow) {
-      const side = (t.type ?? '?').toUpperCase();
-      const sign = t.type === 'buy' ? '+' : '−';
-      const asset = (t.asset ?? '').padEnd(8);
+      const isSwap = t.type === 'swap';
+      const side   = (t.type ?? '?').toUpperCase();
+      const sign   = t.type === 'buy' ? '+' : isSwap ? '⇄' : '−';
+      const asset  = isSwap
+        ? `${(t.fromAsset ?? '?')}→${(t.toAsset ?? '?')}`.padEnd(7)
+        : (t.asset ?? '').padEnd(7);
       const amt   = (t.amountUsd != null ? fmtUSD(t.amountUsd) : '').padEnd(8);
       let icon, color, label;
-      if      (t.status === 'executed') { icon = '✓'; color = 'green-fg';  label = 'on-chain'; }
-      else if (t.status === 'dry_run')  { icon = '~'; color = 'cyan-fg';   label = 'dry run';  }
-      else if (t.status === 'blocked')  { icon = '✗'; color = 'red-fg';    label = (t.reason ?? 'blocked').slice(0, 30); }
-      else if (t.status === 'failed')   { icon = '⚠'; color = 'red-fg';    label = 'FAILED';   }
-      else if (t.status === 'skipped')  { icon = '—'; color = 'white-fg';  label = 'skipped';  }
-      else                              { icon = '·'; color = t.type === 'buy' ? 'green-fg' : 'red-fg'; label = 'proposed'; }
-      L.push(`  {${color}}{bold}${icon}{/} {${color}}${sign} ${side.padEnd(5)} ${asset} ${amt}{/}${label}`);
+      if      (t.status === 'executed') { icon = '✓'; color = 'green-fg'; label = 'on-chain'; }
+      else if (t.status === 'dry_run')  { icon = '~'; color = 'cyan-fg';  label = 'dry run';  }
+      else if (t.status === 'blocked')  { icon = '✗'; color = 'red-fg';   label = (t.reason ?? 'blocked').slice(0, 16); }
+      else if (t.status === 'failed')   { icon = '⚠'; color = 'red-fg';   label = 'failed';   }
+      else if (t.status === 'skipped')  { icon = '—'; color = 'white-fg'; label = 'skipped';  }
+      else                              { icon = '·'; color = isSwap ? 'cyan-fg' : t.type === 'buy' ? 'green-fg' : 'red-fg'; label = 'proposed'; }
+      C1.push(` {${color}}{bold}${icon}{/} {${color}}${sign} ${side.padEnd(4)} ${asset} ${amt}{/}{white-fg}${label}{/}`);
     }
   } else {
-    L.push('  · Holding — no trades');
+    C1.push(' · no trades');
   }
-  L.push('');
 
-  // All flags — no cap, no truncation
+  C1.push(DIV);
+  C1.push('{bold}HISTORY{/}');
+  for (const entry of [...localDecisionHistory].reverse()) {
+    const ac   = ACTION_COLOR[entry.action] ?? 'white-fg';
+    const time = entry.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    C1.push(` ${time}  {${ac}}{bold}${entry.action.toUpperCase().padEnd(9)}{/}  ${entry.confidence}%`);
+  }
+
+  // ── C2 — RATIONALE (center column = dashboard center) ─────────────────────
+  const C2 = [];
+
+  C2.push('{bold}RATIONALE{/}');
+  C2.push(DIV);
+  for (const line of wordWrap(decision.rationale ?? 'N/A', cW)) C2.push(line);
+
   const rawFlags = [
     ...(decision.riskFlags ?? []).filter(f =>
       !f.startsWith('BLOCKED') && !f.startsWith('TRIMMED') &&
@@ -531,96 +584,79 @@ function updateReasonDisplay(result, triggeredBy = null) {
     ...violations.filter(v => !v.startsWith('TRIMMED')),
   ];
   const uniqueFlags = [...new Set(rawFlags)];
-  for (const f of uniqueFlags) {
-    const isCrit = f.startsWith('BLOCKED') || f.startsWith('HALT') || f.startsWith('STOP');
-    const color  = isCrit ? 'red-fg' : 'yellow-fg';
-    const icon   = isCrit ? '✗' : '⚠';
-    const clip   = f.length > LW - 4 ? f.slice(0, LW - 5) + '…' : f;
-    L.push(`  {${color}}${icon} ${clip}{/}`);
+  if (uniqueFlags.length > 0) {
+    C2.push('');
+    C2.push('{bold}FLAGS{/}');
+    C2.push(DIV);
+    for (const f of uniqueFlags) {
+      const isCrit = f.startsWith('BLOCKED') || f.startsWith('HALT') || f.startsWith('STOP');
+      const color  = isCrit ? 'red-fg' : 'yellow-fg';
+      const icon   = isCrit ? '✗' : '⚠';
+      const wrapped = wordWrap(`${icon} ${f}`, cW - 1);
+      C2.push(`{${color}}${wrapped[0]}{/}`);
+      for (let i = 1; i < wrapped.length; i++) C2.push(`{${color}}  ${wrapped[i]}{/}`);
+    }
   }
 
-  // Recent decisions
-  localDecisionHistory.push({
-    action: decision.action ?? '?', confidence: conf,
-    timestamp: new Date(), triggeredBy: triggeredBy ?? 'manual',
-  });
-  if (localDecisionHistory.length > 6) localDecisionHistory.shift();
-
-  L.push('');
-  L.push('─'.repeat(LW));
-  for (const entry of [...localDecisionHistory].reverse()) {
-    const ac   = ACTION_COLOR[entry.action] ?? 'white-fg';
-    const time = entry.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-    L.push(`  ${time}  {${ac}}{bold}${entry.action.toUpperCase().padEnd(9)}{/}  ${entry.confidence}%  ${(entry.triggeredBy ?? '').slice(0, 22)}`);
-  }
-
-  // ── Build RIGHT column lines — Market Analysis ────────────────────────────
-  const R = [];
+  // ── C3 — MARKET ───────────────────────────────────────────────────────────
+  const C3 = [];
   const market    = lastMarketSnapshot ?? {};
   const portfolio = lastPortfolio;
 
-  R.push('{bold}Market Analysis{/}');
-  R.push('─'.repeat(50));
+  C3.push('{bold}MARKET{/}');
+  C3.push(DIV);
 
-  // Holdings snapshot: symbol, 1h, 24h
-  // lastPortfolio.holdings uses { token, balance, price, value } from /portfolio route
   if (portfolio?.holdings?.length) {
-    R.push('{bold}Holdings         1h         24h{/}');
+    C3.push(`{bold}${'HOLDINGS'.padEnd(9)}  ${'1H'.padStart(6)}   ${'24H'.padStart(6)}{/}`);
     for (const h of portfolio.holdings.filter(h => h.token && h.token !== 'USDC' && (h.value ?? 0) > 0)) {
-      const sym  = h.token;
-      const m    = market[sym] ?? {};
-      const h1   = m.change1h  != null ? `${m.change1h  >= 0 ? '+' : ''}${m.change1h.toFixed(2)}%`  : '  —  ';
-      const h24  = m.change24h != null ? `${m.change24h >= 0 ? '+' : ''}${m.change24h.toFixed(2)}%` : '  —  ';
-      const c1   = (m.change1h  ?? 0) >= 0 ? 'green-fg' : 'red-fg';
-      const c24  = (m.change24h ?? 0) >= 0 ? 'green-fg' : 'red-fg';
-      R.push(`  ${sym.padEnd(8)}  {${c1}}${h1.padStart(7)}{/}    {${c24}}${h24.padStart(7)}{/}`);
+      const sym = h.token;
+      const m   = market[sym] ?? {};
+      const h1  = m.change1h  != null ? `${m.change1h  >= 0 ? '+' : ''}${m.change1h.toFixed(2)}%`  : '   —  ';
+      const h24 = m.change24h != null ? `${m.change24h >= 0 ? '+' : ''}${m.change24h.toFixed(2)}%` : '   —  ';
+      const c1  = (m.change1h  ?? 0) >= 0 ? 'green-fg' : 'red-fg';
+      const c24 = (m.change24h ?? 0) >= 0 ? 'green-fg' : 'red-fg';
+      C3.push(` ${sym.padEnd(8)}  {${c1}}${h1.padStart(6)}{/}   {${c24}}${h24.padStart(6)}{/}`);
     }
-    R.push('');
+    C3.push('');
   }
 
-  // Top 1h movers from full market (not held)
   const heldSet = new Set((portfolio?.holdings ?? []).map(h => h.token).filter(Boolean));
-  const movers = Object.entries(market)
+  const movers  = Object.entries(market)
     .filter(([sym, d]) => !heldSet.has(sym) && sym !== 'USDC' && d.change1h != null)
     .sort((a, b) => b[1].change1h - a[1].change1h)
-    .slice(0, 5);
+    .slice(0, 4);
 
   if (movers.length > 0) {
-    R.push('{bold}Top Movers (1h — not held){/}');
+    C3.push('{bold}TOP MOVERS (1H){/}');
     for (const [sym, d] of movers) {
-      const c = d.change1h >= 0 ? 'green-fg' : 'red-fg';
-      const vol = d.volume24hUsd != null ? ` vol $${(d.volume24hUsd / 1e6).toFixed(0)}M` : '';
-      R.push(`  {${c}}{bold}${sym.padEnd(9)}{/} {${c}}${d.change1h >= 0 ? '+' : ''}${d.change1h.toFixed(2)}%{/}${vol}`);
+      const c   = d.change1h >= 0 ? 'green-fg' : 'red-fg';
+      const vol = d.volume24hUsd != null ? `  {white-fg}$${(d.volume24hUsd / 1e6).toFixed(0)}M{/}` : '';
+      C3.push(` {${c}}{bold}${sym.padEnd(9)}{/}{${c}}${d.change1h >= 0 ? '+' : ''}${d.change1h.toFixed(2)}%{/}${vol}`);
     }
-    R.push('');
+    C3.push('');
   }
 
-  // Market health: up/down ratio across portfolio holdings
   if (portfolio?.holdings?.length) {
     const moves = portfolio.holdings
       .filter(h => h.token && h.token !== 'USDC' && (h.value ?? 0) > 0 && market[h.token]?.change24h != null)
       .map(h => market[h.token].change24h);
-    const up   = moves.filter(c => c > 0).length;
-    const down = moves.filter(c => c < 0).length;
-    const healthColor = up > down ? 'green-fg' : down > up ? 'red-fg' : 'yellow-fg';
-    R.push(`{bold}Holdings Health{/}  {${healthColor}}${up} up / ${down} down{/} (24h)`);
+    const up  = moves.filter(c => c > 0).length;
+    const dn  = moves.filter(c => c < 0).length;
+    const hc  = up > dn ? 'green-fg' : dn > up ? 'red-fg' : 'yellow-fg';
+    C3.push(`{bold}HEALTH{/}  {${hc}}${up}↑  ${dn}↓{/}  (24h)`);
 
-    // Cash & total
-    const totalValue = portfolio.totalValue ?? portfolio.totalValueUsd ?? 0;
+    const totalValue  = portfolio.totalValue ?? portfolio.totalValueUsd ?? 0;
     const cashHolding = portfolio.holdings.find(h => h.token === 'USDC');
-    const cashUsd = cashHolding?.value ?? 0;
-    const cashPct = totalValue > 0 ? ((cashUsd / totalValue) * 100).toFixed(1) : '0.0';
-    R.push(`Cash  {white-fg}$${cashUsd.toFixed(2)} (${cashPct}%){/}`);
+    const cashUsd     = cashHolding?.value ?? 0;
+    const cashPct     = totalValue > 0 ? ((cashUsd / totalValue) * 100).toFixed(1) : '0.0';
+    C3.push(`{bold}CASH{/}   $${cashUsd.toFixed(2)}  {white-fg}(${cashPct}%){/}`);
   }
 
-  // ── Zip left + right columns with │ separator ─────────────────────────────
-  const SEP  = ' {white-fg}│{/} ';
-  const rows  = Math.max(L.length, R.length);
+  // ── Zip all 3 columns ─────────────────────────────────────────────────────
+  const rows  = Math.max(C1.length, C2.length, C3.length);
   const lines = [];
   for (let i = 0; i < rows; i++) {
-    const left  = L[i] ?? '';
-    const right = R[i] ?? '';
-    lines.push(padCol(left, LW) + SEP + right);
+    lines.push(padCol(C1[i] ?? '', cW) + SEP + padCol(C2[i] ?? '', cW) + SEP + (C3[i] ?? ''));
   }
 
   reasonBox.setContent(lines.join('\n'));
@@ -633,7 +669,7 @@ function updateReasonDisplay(result, triggeredBy = null) {
         tradeHistory.unshift({
           time:    new Date(),
           side:    t.side ?? t.type ?? '?',
-          asset:   t.asset ?? '?',
+          asset:   t.type === 'swap' ? `${t.fromAsset ?? '?'}→${t.toAsset ?? '?'}` : (t.asset ?? '?'),
           amountUsd: t.amountUsd ?? 0,
           status:  t.status,
           txid:    t.txid,
@@ -651,7 +687,10 @@ function updateReasonDisplay(result, triggeredBy = null) {
   } else if (execution?.trades?.some(t => t.status === 'executed')) {
     const summary = execution.trades
       .filter(t => t.status === 'executed')
-      .map(t => `${t.side?.toUpperCase() ?? '?'} ${t.asset ?? ''} ${fmtUSD(t.amountUsd ?? 0)}`)
+      .map(t => t.type === 'swap'
+        ? `SWAP ${t.fromAsset ?? '?'}→${t.toAsset ?? '?'} ${fmtUSD(t.amountUsd ?? 0)}`
+        : `${t.side?.toUpperCase() ?? '?'} ${t.asset ?? ''} ${fmtUSD(t.amountUsd ?? 0)}`
+      )
       .join(', ');
     notify('Mercer — Trade Executed', summary);
   }
@@ -666,7 +705,7 @@ function updateReasonDisplay(result, triggeredBy = null) {
       screen.render();
       if (++flashes >= 6) {
         clearInterval(flashInterval);
-        reasonBox.style.border.fg = 'blue';
+        reasonBox.style.border.fg = 'cyan';
         screen.render();
       }
     }, 200);
@@ -797,7 +836,7 @@ setInterval(() => {
     if (spinnerActive) {
       spinnerActive = false;
       tableBox.setLabel(' Portfolio Holdings ');
-      reasonBox.setLabel(' Claude Decisions');
+      reasonBox.setLabel(' ◈  Claude Decisions  ◈ ');
       screen.render();
     }
     return;
@@ -821,6 +860,8 @@ let sessionCycles        = 0;
 let localDecisionHistory = [];
 let liveHistory          = [];   // in-memory chart data, appended every data refresh
 let lastPortfolio        = null; // last fetched portfolio, reused for chart ticks
+let lastReasonResult     = null; // last reasoning result — replayed on terminal resize
+let lastReasonTrigger    = null;
 let lastMaxMovement      = { symbol: null, pct: 0 };
 let walletSource         = 'mock';   // 'live' | 'mock'
 let adaptiveThreshold    = REASON_THRESHOLD;
@@ -847,20 +888,51 @@ function loadLastDecision() {
         triggeredBy: 'persisted',
       });
     }
-    // Show the most recent decision in the box immediately
+    // Show the most recent decision in the box immediately (3-col layout)
     const last = hist[hist.length - 1];
     if (last) {
-      const ts   = new Date(last.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-      const ac   = { hold:'yellow-fg', rebalance:'cyan-fg', buy:'green-fg', sell:'red-fg', alert:'magenta-fg' }[last.action] ?? 'white-fg';
+      const AC_MAP = { hold:'yellow-fg', rebalance:'cyan-fg', buy:'green-fg', sell:'red-fg', alert:'magenta-fg' };
+      const ac   = AC_MAP[last.action] ?? 'white-fg';
       const conf = ((last.confidence ?? 0) * 100).toFixed(0);
-      const rat  = (last.rationale ?? 'N/A');
-      const ratClip = rat.length > 74 ? rat.slice(0, 72) + '…' : rat;
-      reasonBox.setContent(
-        `{bold}{${ac}}${(last.action ?? '?').toUpperCase()}{/}  ${confBar(parseFloat(conf))} {bold}${conf}%{/}  {white-fg}↳ ${ts} · persisted{/}\n` +
-        `{white-fg}─────────────────────────────────────────────{/}\n` +
-        `${ratClip}\n\n` +
-        `{white-fg}Waiting for live data…{/}`
-      );
+      const ts   = new Date(last.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const usable = Math.max(90, screen.width - 4);
+      const cW     = Math.floor((usable - 6) / 3);
+      const DIV    = '{cyan-fg}' + '─'.repeat(cW) + '{/}';
+      const SEP    = ' {cyan-fg}│{/} ';
+
+      const C1 = [
+        `{bold}{${ac}}${(last.action ?? '?').toUpperCase()}{/}  ${confBar(parseFloat(conf))}  {bold}${conf}%{/}`,
+        `{white-fg}↳ ${ts} · persisted{/}`,
+        DIV,
+        '{bold}TRADES{/}',
+        ' · no live data yet',
+        DIV,
+        '{bold}HISTORY{/}',
+        ...localDecisionHistory.slice().reverse().map(e => {
+          const eac  = AC_MAP[e.action] ?? 'white-fg';
+          const ets  = e.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+          return ` ${ets}  {${eac}}{bold}${e.action.toUpperCase().padEnd(9)}{/}  ${e.confidence}%`;
+        }),
+      ];
+
+      const C2 = [
+        '{bold}RATIONALE{/}',
+        DIV,
+        ...wordWrap(last.rationale ?? 'N/A', cW),
+      ];
+
+      const C3 = [
+        '{bold}MARKET{/}',
+        DIV,
+        '{white-fg}Waiting for live data…{/}',
+      ];
+
+      const rows  = Math.max(C1.length, C2.length, C3.length);
+      const lines = [];
+      for (let i = 0; i < rows; i++) {
+        lines.push(padCol(C1[i] ?? '', cW) + SEP + padCol(C2[i] ?? '', cW) + SEP + (C3[i] ?? ''));
+      }
+      reasonBox.setContent(lines.join('\n'));
       reasonBox.setScrollPerc(0);
     }
   } catch {
@@ -1102,10 +1174,11 @@ function toggleTradeHistory() {
                      '{cyan-fg}──────────────────────────────────────────────────{/}'];
       for (const t of tradeHistory) {
         const time = t.time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-        const sc   = t.side === 'buy' ? 'green-fg' : 'red-fg';
-        const sign = t.side === 'buy' ? '+' : '−';
+        const isSwapEntry = t.side === 'swap';
+        const sc   = isSwapEntry ? 'cyan-fg' : t.side === 'buy' ? 'green-fg' : 'red-fg';
+        const sign = isSwapEntry ? '⇄' : t.side === 'buy' ? '+' : '−';
         lines.push(
-          `{grey-fg}${time}{/}  {${sc}}${sign} ${t.side.toUpperCase().padEnd(4)}  ${(t.asset ?? '?').padEnd(6)}  ${fmtUSD(t.amountUsd ?? 0).padEnd(12)}  ${t.status}{/}`
+          `{grey-fg}${time}{/}  {${sc}}${sign} ${t.side.toUpperCase().padEnd(4)}  ${(t.asset ?? '?').padEnd(10)}  ${fmtUSD(t.amountUsd ?? 0).padEnd(12)}  ${t.status}{/}`
         );
       }
       tradeHistBox.setContent(lines.join('\n'));
@@ -1155,6 +1228,14 @@ function confirmQuit() {
 }
 
 // ─── Key bindings ─────────────────────────────────────────────────────────────
+
+// ── Resize — reflow all baked-width content to new terminal dimensions ────────
+screen.on('resize', () => {
+  if (lastReasonResult) updateReasonDisplay(lastReasonResult, lastReasonTrigger);
+  if (lastPortfolio)    updatePortfolioTable(lastPortfolio, lastMarketSnapshot ?? {});
+  if (lastMarketSnapshot) updateMarketBox(selectedMarketToken, lastMarketSnapshot);
+  screen.render();
+});
 
 screen.key(['q', 'C-c'],  () => { confirmQuit(); });
 screen.key(['r'],          () => { doRefresh(true); });

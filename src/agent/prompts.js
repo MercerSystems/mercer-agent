@@ -14,35 +14,92 @@ Your role is to analyze portfolio state, market conditions, and the user's risk 
 - Enforce user-defined mandates before executing any trade
 
 ## Trading Philosophy
-You are a momentum trader. Move swiftly, take profits quickly, redeploy into the next opportunity. Think like a ninja — precise entries, fast exits, never overstay a position.
+You are a small-cap discovery trader operating across the full Solana ecosystem — 400+ tokens analyzed every cycle. Your portfolio is small, and that is your edge: small portfolios cannot move large-cap markets, but they can enter and exit micro and small-cap tokens before the crowd arrives.
 
-You see up to 150 tradeable Solana ecosystem tokens in real time. Evaluate ALL of them equally — no favorites, no bias. Your edge is speed and selectivity.
+**The core strategy:** Find tokens in the $1M–$20M market cap range that are just beginning to gain traction — high turnover, rising 1h momentum, clear narrative tailwind. Enter early, ride the move, exit fast. These are the plays that turn $10 into $50. Repeat.
+
+**Portfolio growth stages:**
+- Now ($0–$2K): Focus almost entirely on micro and small-cap momentum plays ($1M–$20M cap). This is where asymmetric returns live for a portfolio this size.
+- Growth ($2K–$10K): Begin mixing in mid-cap tokens ($20M–$200M) as position sizes grow. Still prioritize momentum over stability.
+- Maturity ($10K+): Shift toward larger caps for stability, use small-cap allocation tactically for growth positions.
+
+Until the portfolio crosses $2K, large-cap tokens (SOL, JUP, etc.) offer negligible return potential for the position sizes you can take. Every cycle you hold a large-cap is a cycle you're not compounding in small caps.
+
+**Risk/reward reality check:** Safety and profitability are not opposites — but excessive caution IS a risk. Sitting in USDC while a narrative runs means a guaranteed 0% return. The mandate sets hard limits for a reason; within those limits, be aggressive about finding and capturing moves. A missed 30% gain because you held cash is just as real a cost as a 20% loss. When the setup is clear and conviction is high, size accordingly.
+
+**Conviction-based position sizing:**
+Tokens in your context are scored ★★★ / ★★ / ★ based on momentum alignment + volume spike ratio.
+- ★★★ (1h >5%, 24h >10%, volume spike ≥2×): High conviction — size up to 80% of your max position
+- ★★  (1h >3%, 24h >5% or volume spike ≥2×): Moderate — size up to 50% of max position
+- ★   (weaker signal): Small starter — up to 30% of max position, or skip if cash is limited
+Always respect the mandate's maxPositionPct hard cap — conviction sizing works within that limit, not beyond it.
+
+## Narrative & Macro Awareness
+Before evaluating individual tokens, form a view on the current environment:
+
+**Macro climate signals to read from your data:**
+- If BTC/SOL are up strongly across 24h: risk-on — market is hunting for beta. Prioritize high-momentum small caps.
+- If BTC/SOL are flat or down: risk-off or consolidation — tighten sizing, prefer quality over speculation.
+- If volume is spiking broadly: capital rotation in progress — find the sector receiving inflows.
+- If volume is thin and moves are muted: accumulation or indecision — hold cash, wait for conviction.
+
+**Active crypto narratives to track (Solana ecosystem):**
+- **AI / DePIN**: AI-agent tokens, decentralized compute, inference networks. Hot when AI hype cycles are active. Watch for 1h breakouts on AI-named tokens.
+- **DeSci**: Science funding/IP on-chain (BIO, etc.). Niche but can spike on biotech/research news.
+- **Meme / Culture coins**: Pure momentum and community energy. Move 30-100% in hours. Only enter on confirmed momentum with volume — never "it might pump."
+- **Gaming / NFT infrastructure**: Lower beta currently — avoid unless clear catalyst.
+- **RWA / Stablecoins**: Macro tailwind but low volatility — not suitable for momentum trading.
+
+**Sector rotation logic:**
+- Money doesn't leave crypto, it rotates. If one sector is cooling, identify where it's going.
+- When AI narrative is hot, AI tokens outperform. When meme cycle is active, culture coins outperform. Read the room from what's moving in your market data.
+- A token with +15% 1h AND 5x normal volume is telling you something. A token with +5% 1h on thin volume is noise.
+
+**Narrative conviction test — before entering any position, ask:**
+1. What story does this token represent?
+2. Is that story currently being bid by the market (momentum + volume confirm it)?
+3. Is there a catalyst — real or narrative-driven — that could extend this move?
+4. What kills this trade? (Narrative fades, broader risk-off, token-specific rug)
+If you can't answer these cleanly, hold cash instead.
 
 **Entry signals to act on:**
-- Strong 1h momentum (+5% or more) with confirming volume
-- Token breaking out after consolidation
-- Sector rotation — capital flowing into a category
+- Strong 1h momentum (+5% or more) with confirming volume — narrative is being actively bid
+- Token breaking out after consolidation — compression + expansion pattern
+- Sector rotation — capital visibly flowing into a category that your holdings aren't exposed to
+- Narrative catalyst: a sector is running and you hold the wrong tokens for it
 
 **Exit discipline:**
 - Sell into strength, not weakness. Don't wait for the profit ladder to auto-execute if you see momentum fading.
 - Small caps can move 20-50% fast — take the profit and move on. Redeployment beats holding.
-- If a position has stalled with no momentum for multiple cycles, exit and redeploy.
+- If a position has stalled with no momentum for multiple cycles, the narrative has moved on. Exit and redeploy.
+- Never let a winner become a loser because you were attached to the story.
+
+**No loyalty to existing holdings:**
+- A token already in the portfolio gets zero preferential treatment. If it's not in the momentum leaders, it's losing to something that is.
+- Stale and declining positions flagged in your context are costing opportunity cost every cycle they sit. Exit them and put the capital to work in the active narrative.
+- The question is never "should I add to what I hold?" — it's "what is the single best opportunity in 400 tokens right now?" If that's not something you hold, rotate.
 
 **On small portfolios and small caps:**
 - Small-cap tokens (below $50M market cap) offer disproportionate return potential for small trade sizes. A $10 position in a $15M cap token can double. A $10 position in SOL barely moves.
 - Prefer tokens with strong recent momentum AND sufficient volume to exit cleanly.
 - Never size into something you can't exit quickly.
 
+**Micro-cap plays ($1M–$5M market cap):**
+- These are the highest risk, highest reward tier. A $2M cap token with 200% turnover and +15% 1h is in discovery mode — early entries can return 5–10× but can also rug or reverse hard.
+- Max size: $10 or 30% of max position, whichever is smaller. Never go full size on a micro-cap.
+- Entry signal required: high turnover (>50%) + positive 1h momentum. Don't enter on turnover alone with negative price action.
+- Exit fast. Micro-caps don't consolidate — they either rip or dump. Take profit at +20–30% and move on.
+
 **SOL is gas, not a trade:**
 - Never propose buying or selling SOL. It exists solely to pay transaction fees.
 - If the portfolio shows a SOL holding, ignore it for rebalancing purposes.
 
 **When to hold USDC:**
-- Broad market weakness — multiple tokens down across the board
-- No clear momentum signal anywhere in the 150-token universe
-- After a stop-loss: wait for re-entry cooldown and a clear new setup
+- Broad market weakness — multiple tokens down across the board, no sector leading
+- No narrative with clear momentum — market is directionless
+- After a stop-loss: wait for re-entry cooldown and a confirmed new setup with a story behind it
 
-The mandate's filters (minMarketCapUsd, minVolume24hUsd) are your guardrails. Within those guardrails, be aggressive about finding and acting on opportunities.
+The mandate's filters (minMarketCapUsd, minVolume24hUsd) are hard limits — respect them. Everything else is judgment. Within those guardrails, be precise, conviction-driven, and willing to act. The system is designed to protect you from catastrophic losses; use the space it gives you.
 
 ## Mandate System
 Every decision MUST respect the active risk mandate. The mandate defines:
@@ -62,6 +119,17 @@ The watchdog runs every 30 seconds and autonomously executes:
 When you see holdings with high PnL, some ladder rungs may already have been executed.
 Factor this into your reasoning — if a position is already partially sold, you don't need to propose additional profit-taking at the same levels.
 
+## Swap vs Buy/Sell
+Use a **swap** when rotating capital directly from one token into another — no USDC required. This is the preferred action when:
+- Exiting a stalled or declining position to enter a better opportunity in one atomic move
+- USDC cash is at or near the cash floor (no dry powder for a separate buy)
+- You want to redeploy, not hold idle cash between cycles
+
+Use **sell** when exiting to USDC with no immediate replacement target (de-risking, waiting for setup).
+Use **buy** when deploying existing USDC cash into a new position.
+
+A swap trades fromAsset tokens → toAsset tokens directly via Jupiter. The amountUsd is the USD value of the position being exited from fromAsset.
+
 ## Decision Format
 You MUST respond with a single valid JSON object and nothing else. No prose, no markdown fences.
 
@@ -71,8 +139,10 @@ Schema:
   "rationale": "<concise explanation, 1-3 sentences>",
   "trades": [
     {
-      "type": "buy" | "sell",
-      "asset": "<token symbol>",
+      "type": "buy" | "sell" | "swap",
+      "asset": "<token symbol>",          // buy/sell only — omit for swap
+      "fromAsset": "<token to exit>",     // swap only — omit for buy/sell
+      "toAsset": "<token to enter>",      // swap only — omit for buy/sell
       "amountUsd": <number>,
       "reason": "<why this specific trade>"
     }
@@ -95,7 +165,7 @@ Never recommend trades that violate the active mandate.`;
  * @param {string} [params.trigger]  - What initiated this reasoning cycle
  * @returns {string} Formatted context string for the user message
  */
-export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_review', trailingData = null, stopCooldowns = [] }) {
+export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_review', trailingData = null, stopCooldowns = [], blockedBuys = [], recentTrades = [] }) {
   const portfolioLines = portfolio.holdings
     .filter(h => !h.unpriced) // skip tokens with no market price — can't trade or value them
     .map(h => {
@@ -109,16 +179,24 @@ export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_
     })
     .join('\n');
 
+  // Market lines: only held tokens get full detail.
+  // Non-held tokens are shown only if they appear in the top momentum movers — keeps context focused.
+  const heldSymbols = new Set(portfolio.holdings.map(h => h.symbol).filter(Boolean));
+
+  function tokenLine(symbol, data) {
+    const extras = [];
+    if (data.change1h  != null)    extras.push(`1h: ${data.change1h  >= 0 ? '+' : ''}${data.change1h.toFixed(2)}%`);
+    if (data.change24h != null)    extras.push(`24h: ${data.change24h >= 0 ? '+' : ''}${data.change24h.toFixed(2)}%`);
+    if (data.volume24hUsd != null) extras.push(`vol: $${(data.volume24hUsd / 1e6).toFixed(1)}M`);
+    if (data.marketCapUsd != null) extras.push(`mcap: $${(data.marketCapUsd / 1e6).toFixed(0)}M`);
+    if (data.apy != null)          extras.push(`best pool APY: ${data.apy.toFixed(2)}%`);
+    const suffix = extras.length > 0 ? ` (${extras.join(', ')})` : '';
+    return `  - ${symbol}: $${data.price?.toLocaleString() ?? 'n/a'}${suffix}`;
+  }
+
   const marketLines = Object.entries(market)
-    .map(([symbol, data]) => {
-      const extras = [];
-      if (data.change1h  != null)    extras.push(`1h: ${data.change1h  >= 0 ? '+' : ''}${data.change1h.toFixed(2)}%`);
-      if (data.change24h != null)    extras.push(`24h: ${data.change24h >= 0 ? '+' : ''}${data.change24h.toFixed(2)}%`);
-      if (data.volume24hUsd != null) extras.push(`vol: $${(data.volume24hUsd / 1e6).toFixed(1)}M`);
-      if (data.apy != null)          extras.push(`best pool APY: ${data.apy.toFixed(2)}%`);
-      const suffix = extras.length > 0 ? ` (${extras.join(', ')})` : '';
-      return `  - ${symbol}: $${data.price.toLocaleString()}${suffix}`;
-    })
+    .filter(([symbol]) => heldSymbols.has(symbol))
+    .map(([symbol, data]) => tokenLine(symbol, data))
     .join('\n');
 
   // Correlation detection — flag systemic moves across holdings
@@ -133,13 +211,190 @@ export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_
     correlationNote = `\n📈 CORRELATED UPSIDE: ${upCount}/${holdingSymbols.length} holdings up >3% in 24h — consider taking partial profits to rebalance.`;
   }
 
+  // ── Market regime classifier ───────────────────────────────────────────────
+  const solData   = market['SOL'];
+  const sol1h     = solData?.change1h  ?? 0;
+  const sol24h    = solData?.change24h ?? 0;
+  const sol7d     = solData?.change7d  ?? null;
+
+  let regime, regimeNote;
+  if (sol7d !== null) {
+    if      (sol7d > 15  && sol24h > 0)  { regime = 'BULL RUN';    regimeNote = 'Strong uptrend. Ecosystem tokens leading. Size up on high-conviction setups.'; }
+    else if (sol7d > 5   && sol24h >= 0) { regime = 'RECOVERY';    regimeNote = 'Recovering from recent low. Momentum building. Good time to accumulate leaders.'; }
+    else if (sol7d > 5   && sol24h < -3) { regime = 'PULLBACK';    regimeNote = 'Bull pullback — 7d positive but short-term cooling. Consider reducing exposure or waiting for confirmation.'; }
+    else if (sol7d < -20)                { regime = 'BEAR MARKET'; regimeNote = 'Sustained downtrend. Capital preservation priority. Only trade with very high conviction.'; }
+    else if (sol7d < -8)                 { regime = 'CORRECTION';  regimeNote = 'Meaningful correction underway. Be selective. Wait for stabilization before adding exposure.'; }
+    else if (Math.abs(sol7d) <= 5 && Math.abs(sol24h) > 4) { regime = 'VOLATILE';   regimeNote = 'Choppy with large swings. Momentum trades valid but exits must be quick.'; }
+    else                                 { regime = 'CONSOLIDATION'; regimeNote = 'Range-bound. No clear directional bias. Prefer tokens with independent catalysts.'; }
+  } else {
+    regime = sol1h > 2 ? 'RISK-ON' : sol1h < -2 ? 'RISK-OFF' : 'NEUTRAL';
+    regimeNote = '7d data unavailable — reading from short-term momentum only.';
+  }
+
+  const marketPulse = [
+    `REGIME: ${regime} — ${regimeNote}`,
+    solData ? `SOL: ${sol1h >= 0 ? '+' : ''}${sol1h.toFixed(2)}% (1h)  ${sol24h >= 0 ? '+' : ''}${sol24h.toFixed(2)}% (24h)${sol7d !== null ? `  ${sol7d >= 0 ? '+' : ''}${sol7d.toFixed(2)}% (7d)` : ''}` : '',
+  ].filter(Boolean).join('\n');
+
+  // ── Momentum signal ────────────────────────────────────────────────────────
+  const allTokens = Object.entries(market)
+    .filter(([, d]) => d.change1h != null && d.volume24hUsd != null && d.volume24hUsd > 0)
+    .map(([symbol, d]) => ({ symbol, change1h: d.change1h, change24h: d.change24h ?? 0, change7d: d.change7d ?? null, volume24hUsd: d.volume24hUsd, spikeRatio: d.spikeRatio ?? null }));
+
+  const sortedByMomentum = [...allTokens].sort((a, b) => b.change1h - a.change1h);
+
+  function convictionStars(t) {
+    const spike = t.spikeRatio ?? 1;
+    if (t.change1h > 5 && t.change24h > 10 && spike >= 2) return '★★★';
+    if (t.change1h > 3 && t.change24h > 5  || spike >= 2) return '★★ ';
+    return '★  ';
+  }
+
+  const topMovers = sortedByMomentum
+    .filter(t => !heldSymbols.has(t.symbol))
+    .slice(0, 15)
+    .map(t => {
+      const d = market[t.symbol];
+      const mcap  = d?.marketCapUsd ? `  mcap: $${(d.marketCapUsd / 1e6).toFixed(0)}M` : '';
+      const spike = t.spikeRatio != null ? `  vol×${t.spikeRatio.toFixed(1)}` : '';
+      return `  ${convictionStars(t)} ${t.symbol.padEnd(8)} 1h: ${t.change1h >= 0 ? '+' : ''}${t.change1h.toFixed(2)}%  24h: ${t.change24h >= 0 ? '+' : ''}${t.change24h.toFixed(2)}%${mcap}${spike}`;
+    });
+
+  const bottomMovers = sortedByMomentum
+    .slice(-8).reverse()
+    .map(t => `  ${t.symbol.padEnd(8)} 1h: ${t.change1h >= 0 ? '+' : ''}${t.change1h.toFixed(2)}%  24h: ${t.change24h >= 0 ? '+' : ''}${t.change24h.toFixed(2)}%`);
+
+  // ── New launch signals: high turnover ratio (volume / market cap) ─────────
+  // Turnover > 50% = token is being heavily traded relative to its size.
+  // This is the fingerprint of a new launch gaining momentum.
+  const newLaunchSignals = Object.entries(market)
+    .filter(([, d]) => {
+      if (!d.volume24hUsd || !d.marketCapUsd || d.marketCapUsd <= 0) return false;
+      const turnover = (d.volume24hUsd / d.marketCapUsd) * 100;
+      return turnover >= 50 && !heldSymbols.has(d.symbol ?? '');
+    })
+    .map(([symbol, d]) => {
+      const turnover = ((d.volume24hUsd / d.marketCapUsd) * 100).toFixed(0);
+      const mcap     = `$${(d.marketCapUsd / 1e6).toFixed(2)}M`;
+      const ch1h     = d.change1h  != null ? ` 1h: ${d.change1h  >= 0 ? '+' : ''}${d.change1h.toFixed(2)}%` : '';
+      const ch24h    = d.change24h != null ? ` 24h: ${d.change24h >= 0 ? '+' : ''}${d.change24h.toFixed(2)}%` : '';
+      const spike    = d.spikeRatio != null ? ` vol×${d.spikeRatio.toFixed(1)}` : '';
+      return { symbol, turnover: parseFloat(turnover), line: `  ${symbol.padEnd(8)} mcap: ${mcap}  turnover: ${turnover}%${ch1h}${ch24h}${spike}` };
+    })
+    .sort((a, b) => b.turnover - a.turnover)
+    .slice(0, 10)
+    .map(t => t.line);
+
+  // Sustained momentum: strong on BOTH 1h and 24h (narrative in motion, not just a candle spike)
+  const sustainedMovers = allTokens
+    .filter(t => t.change1h > 3 && t.change24h > 5 && !heldSymbols.has(t.symbol))
+    .sort((a, b) => (b.change1h + b.change24h) - (a.change1h + a.change24h))
+    .slice(0, 8)
+    .map(t => {
+      const stars = convictionStars(t);
+      const spike = t.spikeRatio != null ? `  vol×${t.spikeRatio.toFixed(1)}` : '';
+      return `  ${stars} ${tokenLine(t.symbol, market[t.symbol])}${spike}`;
+    });
+
+  // ── Position health: fade detection + stale rotation candidates ───────────
+  const fadingPositions = [];
+  const stalePositions  = [];
+
+  for (const h of portfolio.holdings) {
+    if (!h.symbol || h.symbol === 'USDC' || h.symbol === 'SOL') continue;
+    const d = market[h.symbol];
+    if (!d) continue;
+
+    const change1h  = d.change1h  ?? 0;
+    const change24h = d.change24h ?? 0;
+
+    // Momentum fading: was running but now reversing
+    const wasBullish   = change24h > 5;
+    const nowReversing = change1h < -2;
+    const spikeDown    = d.spikeRatio != null && d.spikeRatio > 1.5 && change1h < 0;
+
+    if (wasBullish && nowReversing) {
+      fadingPositions.push(`  ⚠ ${h.symbol}: 24h was +${change24h.toFixed(1)}% but 1h now ${change1h.toFixed(1)}% — momentum fading, consider exit`);
+    } else if (spikeDown) {
+      fadingPositions.push(`  ⚠ ${h.symbol}: 1h ${change1h.toFixed(1)}% on elevated volume (×${d.spikeRatio.toFixed(1)}) — selling pressure, consider exit`);
+    }
+
+    // Stale: no meaningful momentum in either direction — capital is sitting idle
+    const isStale = change1h > -1 && change1h < 1 && change24h > -3 && change24h < 3;
+    const isDeclining = change24h < -5 || (change24h < -2 && change1h < -1);
+
+    if (isDeclining) {
+      stalePositions.push(`  🔴 ${h.symbol}: declining (1h ${change1h >= 0 ? '+' : ''}${change1h.toFixed(1)}%, 24h ${change24h >= 0 ? '+' : ''}${change24h.toFixed(1)}%) — no momentum, strong rotation candidate`);
+    } else if (isStale) {
+      stalePositions.push(`  🟡 ${h.symbol}: flat/stale (1h ${change1h >= 0 ? '+' : ''}${change1h.toFixed(1)}%, 24h ${change24h >= 0 ? '+' : ''}${change24h.toFixed(1)}%) — capital sitting idle, consider rotating to active narrative`);
+    }
+  }
+
+  // ── Recent trade history + re-buy friction ────────────────────────────────
+  const now60 = Date.now() - 60 * 60 * 1000; // 60 min ago
+
+  // Symbols bought in the last 60 min — flag for re-buy scrutiny
+  const recentlyBought = new Map(); // symbol → { minsAgo, stars }
+  for (const t of recentTrades) {
+    const sym = t.type === 'swap' ? t.toAsset : t.asset;
+    if (!sym || (t.type !== 'buy' && t.type !== 'swap')) continue;
+    const ts = t.time ? new Date(t.time).getTime() : 0;
+    if (ts > now60) {
+      const minsAgo = Math.round((Date.now() - ts) / 60_000);
+      const mdata   = market[sym];
+      const stars   = mdata ? convictionStars({ change1h: mdata.change1h ?? 0, change24h: mdata.change24h ?? 0, spikeRatio: mdata.spikeRatio ?? null }) : '★  ';
+      if (!recentlyBought.has(sym)) recentlyBought.set(sym, { minsAgo, stars });
+    }
+  }
+
+  const rebuyWarnings = [...recentlyBought.entries()].map(([sym, { minsAgo, stars }]) => {
+    const currentStars = stars.trim();
+    const d = market[sym];
+    const spike = d?.spikeRatio != null ? `vol×${d.spikeRatio.toFixed(1)}` : null;
+    let verdict;
+    if (currentStars === '★★★' && spike) {
+      verdict = `may add — ★★★ signal with ${spike} confirms new momentum since entry`;
+    } else if (currentStars === '★★★') {
+      verdict = `may add — ★★★ signal, but verify volume spike confirms new momentum (not just continuation)`;
+    } else {
+      verdict = `DO NOT add — no new signal since you bought. "Still looks good" is not a reason. Find a better opportunity.`;
+    }
+    return `  ⚠ ${sym} bought ${minsAgo}m ago — ${verdict}`;
+  });
+
+  const recentTradeLines = recentTrades.map(t => {
+    const time  = t.time ? new Date(t.time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '??:??';
+    const label = t.type === 'swap' ? `SWAP ${t.fromAsset ?? '?'} → ${t.toAsset ?? '?'}` : `${(t.type ?? '?').toUpperCase()} ${t.asset ?? '?'}`;
+    return `  ${time}  ${label}  $${(t.amountUsd ?? 0).toFixed(2)}`;
+  });
+
   const drawdown = portfolio.peakValueUsd > 0
     ? (((portfolio.peakValueUsd - portfolio.totalValueUsd) / portfolio.peakValueUsd) * 100).toFixed(2)
     : '0.00';
 
+  const universeSize = Object.keys(market).length;
+
   return `## Trigger
 ${trigger}
 
+## Market Regime (${universeSize} tokens analyzed)
+${marketPulse}
+
+## Momentum Leaders — top 15 by 1h, not held (★★★ = strong conviction)
+${topMovers.join('\n') || '  No data'}
+
+## Sustained Movers — 1h >3% AND 24h >5% (narrative in motion, not held)
+${sustainedMovers.join('\n') || '  None meeting threshold'}
+
+## New Launch Signals — turnover >50% (volume/market cap, not held)
+High turnover = heavy trading relative to size. This is the fingerprint of a new token gaining traction.
+Small position sizing recommended ($1M–$3M cap = micro-cap risk). Stop-loss must be respected.
+${newLaunchSignals.join('\n') || '  None meeting threshold'}
+
+## Momentum Laggards — bottom 8 by 1h
+${bottomMovers.join('\n') || '  No data'}
+${fadingPositions.length > 0 ? `\n## Position Alerts — Momentum Fading (consider exit)\n${fadingPositions.join('\n')}` : ''}
+${stalePositions.length > 0 ? `\n## Rotation Candidates — Stale/Declining Positions\nThese holdings have no active momentum. The 400-token universe has better opportunities right now. Exit these and redeploy.\n${stalePositions.join('\n')}` : ''}
 ## Portfolio State
 Total Value: $${portfolio.totalValueUsd.toLocaleString()}
 Peak Value:  $${portfolio.peakValueUsd.toLocaleString()}
@@ -149,16 +404,18 @@ Cash (USDC): $${portfolio.cashUsd.toLocaleString()}
 Holdings:
 ${portfolioLines}
 
-## Market Data
-${marketLines}
+## Current Positions — Market Detail
+${marketLines || '  No held token market data available'}
 
 ## Market Notes${correlationNote || '\nNo correlated moves detected.'}
+${recentTradeLines.length > 0 ? `\n## Recent Trades (your last ${recentTradeLines.length})\n${recentTradeLines.join('\n')}` : ''}
+${rebuyWarnings.length > 0 ? `\n## Re-Buy Scrutiny — tokens bought in the last 60 min\nValid reasons to add: (1) new ★★★ signal with volume spike that wasn't present at entry, (2) sector narrative just ignited and this is the leader, (3) price held support and bounced with volume after your buy. NOT valid: "still looks good", "below max allocation", "momentum continuing".\n${rebuyWarnings.join('\n')}` : ''}
 
 ## Active Mandate
 Risk Tier:       ${mandate.riskTier}
 Max Position:    ${mandate.maxPositionPct}%
 Min Cash (USDC): ${mandate.minCashPct ?? 0}% of portfolio must stay as dry powder (enforced — buys trimmed/blocked to preserve this)
-Stop-Loss:       ${mandate.stopLossPct}% from entry (watchdog auto-executes)
+Stop-Loss:       ${mandate.stopLossPct}% from entry — ${mandate.microCapStopLossPct ? `${mandate.microCapStopLossPct}% for tokens under $${(mandate.microCapThresholdUsd / 1e6).toFixed(0)}M market cap` : 'uniform'} (watchdog auto-executes)
 Trailing Stop:   ${mandate.trailingStopPct ?? 'not set'}% from peak price (watchdog auto-executes)
 Profit Ladder:   ${mandate.takeProfitLadder?.map((r, i) => `rung ${i + 1}: sell ${(r.sellFraction * 100).toFixed(0)}% at +${r.pct}%`).join(', ') ?? 'not set'} (watchdog auto-executes)
 Max Drawdown:    ${mandate.maxDrawdownPct}%
@@ -167,5 +424,6 @@ Min Market Cap:  $${mandate.minMarketCapUsd ? (mandate.minMarketCapUsd / 1e6).to
 Min Volume:      $${mandate.minVolume24hUsd ? (mandate.minVolume24hUsd / 1e6).toFixed(0) + 'M' : 'none'}/day (illiquid tokens blocked for buys)
 ${mandate.notes ? `Notes: ${mandate.notes}` : ''}
 ${stopCooldowns.length > 0 ? `\n## Stop-Loss Re-Entry Cooldowns (DO NOT BUY THESE)\n${stopCooldowns.map(c => `  - ${c.symbol}: blocked for ${c.minsRemaining} more minutes after recent stop-out`).join('\n')}` : ''}
+${blockedBuys.length > 0 ? `\n## Permanently Blocked Buys (NEVER BUY OR SWAP INTO THESE)\n${blockedBuys.map(s => `  - ${s}`).join('\n')}` : ''}
 Analyze this state and return your decision as JSON.`;
 }

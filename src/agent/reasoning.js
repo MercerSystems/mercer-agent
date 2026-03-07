@@ -93,10 +93,10 @@ function parseDecision(raw) {
  *   usage: object
  * }>}
  */
-export async function reason({ portfolio, market, mandate, trigger = 'scheduled_review', history = [], trailingData = null, stopCooldowns = [] }) {
+export async function reason({ portfolio, market, mandate, trigger = 'scheduled_review', history = [], trailingData = null, stopCooldowns = [], blockedBuys = [], recentTrades = [] }) {
   const client = getClient();
 
-  const contextMessage = buildContext({ portfolio, market, mandate, trigger, trailingData, stopCooldowns });
+  const contextMessage = buildContext({ portfolio, market, mandate, trigger, trailingData, stopCooldowns, blockedBuys, recentTrades });
 
   const messages = [
     ...history,

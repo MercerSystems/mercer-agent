@@ -62,10 +62,156 @@ function loadKeypair() {
   }
 }
 
+// ─── Token-to-token swap executor ─────────────────────────────────────────────
+async function executeSwapTrade(trade, market, jupiterApi) {
+  const { fromAsset, toAsset } = trade;
+  let amountUsd = trade.amountUsd;
+
+  // Resolve from-asset mint
+  const fromCoingeckoId = market[fromAsset]?.coingeckoId;
+  const fromTokenInfo   = await resolveToken(fromAsset, fromCoingeckoId);
+  if (!fromTokenInfo) {
+    const msg = `Cannot resolve mint for ${fromAsset} (coingeckoId: ${fromCoingeckoId ?? 'unknown'}) — swap blocked`;
+    console.error(`[Mercer Executor] ${msg}`);
+    await sendAlert(`Warning: Swap skipped — ${msg}`);
+    return { ...trade, status: 'blocked', reason: msg };
+  }
+
+  // Resolve to-asset mint
+  const toCoingeckoId = market[toAsset]?.coingeckoId;
+  const toTokenInfo   = await resolveToken(toAsset, toCoingeckoId);
+  if (!toTokenInfo) {
+    const msg = `Cannot resolve mint for ${toAsset} (coingeckoId: ${toCoingeckoId ?? 'unknown'}) — swap blocked`;
+    console.error(`[Mercer Executor] ${msg}`);
+    await sendAlert(`Warning: Swap skipped — ${msg}`);
+    return { ...trade, status: 'blocked', reason: msg };
+  }
+
+  const fromPrice = market[fromAsset]?.price;
+  if (!fromPrice) throw new Error(`No market price available for ${fromAsset}`);
+
+  const inputMint  = fromTokenInfo.mint;
+  const outputMint = toTokenInfo.mint;
+  let rawAmount    = Math.round((amountUsd / fromPrice) * Math.pow(10, fromTokenInfo.decimals));
+
+  if (rawAmount <= 0) {
+    throw new Error(`Calculated raw amount is 0 for swap ${fromAsset} → ${toAsset} $${amountUsd} — trade too small`);
+  }
+
+  // ── MAX_TRADE_USD cap ──────────────────────────────────────────────────────
+  const maxTradeUsd = parseFloat(process.env.MAX_TRADE_USD) || 35;
+  if (amountUsd > maxTradeUsd) {
+    console.log(`[Mercer Executor] Swap trimmed — $${amountUsd} → $${maxTradeUsd} (MAX_TRADE_USD cap)`);
+    amountUsd = maxTradeUsd;
+    rawAmount = Math.round((amountUsd / fromPrice) * Math.pow(10, fromTokenInfo.decimals));
+  }
+
+  // ── Get quote ──────────────────────────────────────────────────────────────
+  const label = `${fromAsset} → ${toAsset}`;
+  console.log(`[Mercer Executor] ${ts()} — Quote request — SWAP ${label}`);
+  console.log(`[Mercer Executor]   inputMint:   ${inputMint}  (${fromAsset})`);
+  console.log(`[Mercer Executor]   outputMint:  ${outputMint}  (${toAsset})`);
+  console.log(`[Mercer Executor]   amount:      ${rawAmount} (raw) = $${amountUsd} USD`);
+
+  let quote;
+  try {
+    quote = await jupiterApi.quoteGet({ inputMint, outputMint, amount: rawAmount, slippageBps: 50 });
+  } catch (err) {
+    let body = '';
+    try { body = err.response ? await err.response.text() : ''; } catch { body = '(could not read response body)'; }
+    console.error(`[Mercer Executor] Quote FAILED for SWAP ${label}: ${err.message} — ${body}`);
+    throw new Error(`Jupiter quote failed for swap ${label}: ${err.message} — ${body}`);
+  }
+
+  console.log(
+    `[Mercer Executor] ${ts()} — Quote — SWAP ${label}` +
+    ` | in: ${quote.inAmount} | out: ${quote.outAmount}` +
+    ` | price impact: ${quote.priceImpactPct}%`
+  );
+
+  // ── Price impact guard ─────────────────────────────────────────────────────
+  const maxImpact   = parseFloat(process.env.MAX_PRICE_IMPACT_PCT) || 2.0;
+  const priceImpact = parseFloat(quote.priceImpactPct ?? 0);
+  if (priceImpact > maxImpact) {
+    const msg = `Price impact ${priceImpact.toFixed(2)}% exceeds ${maxImpact}% limit for SWAP ${label} $${amountUsd} — trade blocked`;
+    console.warn(`[Mercer Executor] BLOCKED — ${msg}`);
+    await sendAlert(`Warning: ${msg}`);
+    return { ...trade, status: 'blocked', reason: msg };
+  }
+
+  if (DRY_RUN) {
+    console.log(`[Mercer Executor] ${ts()} — DRY_RUN=true — skipping broadcast for swap ${label} $${amountUsd}`);
+    return { ...trade, status: 'dry_run', quote };
+  }
+
+  // ── Pre-flight checks ──────────────────────────────────────────────────────
+  if (!process.env.SOLANA_RPC_URL) throw new Error('SOLANA_RPC_URL not set — required for live execution.');
+  {
+    const minSolForGas = parseFloat(process.env.MIN_SOL_FOR_GAS) || 0.01;
+    const keypair      = loadKeypair();
+    const connection   = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+
+    const lamports = await connection.getBalance(keypair.publicKey);
+    if (lamports / 1e9 < minSolForGas) {
+      const msg = `Insufficient SOL for gas: ${(lamports / 1e9).toFixed(4)} SOL < ${minSolForGas} minimum`;
+      console.error(`[Mercer Executor] ${msg}`);
+      await sendAlert(`Warning: ${msg}`);
+      return { ...trade, status: 'blocked', reason: msg };
+    }
+
+    // Balance check for fromAsset — ensure we actually hold enough to swap
+    const { value: fromAccounts } = await connection.getParsedTokenAccountsByOwner(
+      keypair.publicKey,
+      { mint: new PublicKey(inputMint) }
+    );
+    const fromBalance = fromAccounts[0]?.account.data.parsed.info.tokenAmount.uiAmount ?? 0;
+    const requiredTokens = amountUsd / fromPrice;
+    if (fromBalance < requiredTokens * 0.99) { // 1% tolerance for rounding
+      const msg = `Insufficient ${fromAsset}: ${fromBalance.toFixed(6)} available < ${requiredTokens.toFixed(6)} required — swap blocked`;
+      console.error(`[Mercer Executor] ${msg}`);
+      await sendAlert(`Warning: ${msg}`);
+      return { ...trade, status: 'blocked', reason: msg };
+    }
+  }
+
+  // ── Build + broadcast swap transaction ────────────────────────────────────
+  try {
+    const keypair = loadKeypair();
+    const swapResult = await jupiterApi.swapPost({
+      swapRequest: {
+        quoteResponse:    quote,
+        userPublicKey:    keypair.publicKey.toBase58(),
+        wrapAndUnwrapSol: true,
+      },
+    });
+
+    const tx = VersionedTransaction.deserialize(Buffer.from(swapResult.swapTransaction, 'base64'));
+    tx.sign([keypair]);
+
+    const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+    const txid = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
+    await connection.confirmTransaction(txid, 'confirmed');
+
+    console.log(`[Mercer Executor] ${ts()} — Confirmed — SWAP ${label} | tx: https://solscan.io/tx/${txid}`);
+    signalTrade();
+    return { ...trade, status: 'executed', txid };
+
+  } catch (err) {
+    console.error(`[Mercer Executor] Swap execution failed for ${label}:`, err.message);
+    await sendAlert(`Warning: Swap FAILED — ${label} $${amountUsd} — ${err.message}`);
+    return { ...trade, status: 'failed', error: err.message };
+  }
+}
+
 // ─── Single trade executor ────────────────────────────────────────────────────
 async function executeTrade(trade, market, jupiterApi) {
   const { type, asset } = trade;
   let amountUsd = trade.amountUsd;
+
+  // Delegate token-to-token swaps to dedicated handler
+  if (type === 'swap') {
+    return executeSwapTrade(trade, market, jupiterApi);
+  }
 
   // Buying USDC is a no-op — sell proceeds already land in USDC automatically
   if (asset === 'USDC') {
