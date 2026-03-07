@@ -24,10 +24,13 @@ export const DEFAULT_BASE_PORTFOLIO = {
  */
 export function buildLivePortfolio(base, market) {
   const holdings = base.holdings.map((h) => {
-    const currentPrice = market[h.symbol]?.price ?? h.entryPrice;
+    const currentPrice = market[h.symbol]?.price ?? h.entryPrice ?? 0;
     const valueUsd     = currentPrice * h.quantity;
-    const pnlPct       = ((currentPrice - h.entryPrice) / h.entryPrice) * 100;
-    return { ...h, currentPrice, valueUsd, pnlPct };
+    const pnlPct       = h.entryPrice > 0
+      ? ((currentPrice - h.entryPrice) / h.entryPrice) * 100
+      : 0;
+    const unpriced     = !market[h.symbol]?.price && !h.entryPrice;
+    return { ...h, currentPrice, valueUsd, pnlPct, unpriced };
   });
 
   // cashUsd = explicit base cash + any USDC held as an SPL token.

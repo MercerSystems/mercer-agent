@@ -93,6 +93,7 @@ Never recommend trades that violate the active mandate.`;
  */
 export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_review', trailingData = null, stopCooldowns = [] }) {
   const portfolioLines = portfolio.holdings
+    .filter(h => !h.unpriced) // skip tokens with no market price — can't trade or value them
     .map(h => {
       const pct    = ((h.valueUsd / portfolio.totalValueUsd) * 100).toFixed(1);
       const pnl    = h.pnlPct >= 0 ? `+${h.pnlPct.toFixed(2)}%` : `${h.pnlPct.toFixed(2)}%`;

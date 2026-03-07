@@ -34,6 +34,8 @@ const CORE_TOKENS = {
   POPCAT:   { mint: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', decimals: 9 },
   FARTCOIN: { mint: '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump', decimals: 6 },
   AI16Z:    { mint: 'HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC', decimals: 6 },
+  POKT:     { mint: '6CAsXfiCXZfP8APCG6Vma2DFMindopxiqYQN4LSQfhoC', decimals: 6 },
+  GRASS:    { mint: 'Grass7B4RdKfBCjTKgSqnXkqjwiGvQyFbuSCUJr3XXjs', decimals: 9 },
 };
 
 // In-memory cache: coingeckoId -> { mint, decimals, resolvedAt }
@@ -83,7 +85,7 @@ export async function resolveToken(symbol, coingeckoId) {
         return null;
       }
       const result = { mint: platform.contract_address, decimals: platform.decimal_place ?? 6 };
-      _cache.set(coingeckoId, { ...result, resolvedAt: Date.now() });
+      _cache.set(coingeckoId, { ...result, symbol: sym, resolvedAt: Date.now() });
       console.log(`[Mercer TokenRegistry] Resolved ${sym} (${coingeckoId}): ${result.mint}`);
       return result;
     } catch (err) {
@@ -109,9 +111,9 @@ export function resolveMint(mintAddress) {
   for (const [symbol, info] of Object.entries(CORE_TOKENS)) {
     if (info.mint === mintAddress) return { symbol, decimals: info.decimals };
   }
-  // Check dynamic cache (reverse lookup by mint)
-  for (const [cgId, info] of _cache.entries()) {
-    if (info.mint === mintAddress) return { symbol: cgId.toUpperCase(), decimals: info.decimals };
+  // Check dynamic cache (reverse lookup by mint — use stored symbol, not cgId)
+  for (const [, info] of _cache.entries()) {
+    if (info.mint === mintAddress) return { symbol: info.symbol ?? info.mint, decimals: info.decimals };
   }
   return null;
 }
