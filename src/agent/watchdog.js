@@ -17,6 +17,7 @@ import {
   updateHighWaterMarks, scanTrailingStops,
   scanProfitLadder, clearSymbolState,
 } from './trailing-stops.js';
+import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { scanStopLosses, enforceMandate, MANDATE_PRESETS } from './mandate.js';
 import { recordDecision }                from './reasoning.js';
 import { executeDecision }               from '../executor.js';
@@ -28,11 +29,15 @@ const WATCHDOG_INTERVAL_MS  = parseInt(process.env.WATCHDOG_INTERVAL_MS, 10) || 
 const ALERT_1H_DROP_PCT     = parseFloat(process.env.ALERT_1H_DROP_PCT)    || 5.0;
 const MOMENTUM_BUY_1H_PCT   = parseFloat(process.env.MOMENTUM_BUY_1H_PCT)  || 7.0;
 const MOMENTUM_BUY_CD_MS    = 2 * 60 * 60 * 1000; // 2h between triggers for same symbol
+const LOW_SOL_WARN_SOL      = parseFloat(process.env.LOW_SOL_WARN_SOL)     || 0.03; // warn below this
+const MIN_SOL_FOR_GAS       = parseFloat(process.env.MIN_SOL_FOR_GAS)      || 0.01; // executor blocks below this
+const LOW_SOL_ALERT_CD_MS   = 4 * 60 * 60 * 1000; // alert at most once every 4h
 
 // Per-symbol cooldown — prevents re-firing the same trigger within 15 minutes
 const COOLDOWN_MS   = 15 * 60 * 1000;
 const MOMENTUM_CD   = 60 * 60 * 1000; // 1 hour between momentum alerts
 const lastTriggered = new Map(); // symbol -> { stopLoss, trailingStop, momentum }
+let _lastLowSolAlert = 0;
 
 function isCoolingDown(symbol, type) {
   const cd  = type === 'momentum' ? MOMENTUM_CD : COOLDOWN_MS;
@@ -77,6 +82,27 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
       const { holdings: enrichedHoldings, updated } = applyEntryPrices(basePortfolio.holdings, market, persisted);
       saveEntryPrices(updated);
       const livePortfolio = buildLivePortfolio({ ...basePortfolio, holdings: enrichedHoldings }, market);
+
+      // ── 0. SOL gas balance check ─────────────────────────────────────────────
+      if (SOLANA_RPC_URL && WALLET_ADDRESS && (Date.now() - _lastLowSolAlert) > LOW_SOL_ALERT_CD_MS) {
+        try {
+          const conn      = new Connection(SOLANA_RPC_URL, 'confirmed');
+          const lamports  = await conn.getBalance(new PublicKey(WALLET_ADDRESS));
+          const solBal    = lamports / LAMPORTS_PER_SOL;
+          if (solBal < LOW_SOL_WARN_SOL) {
+            _lastLowSolAlert = Date.now();
+            const critical = solBal < MIN_SOL_FOR_GAS;
+            await sendAlert(
+              critical
+                ? `⛽ CRITICAL: SOL balance ${solBal.toFixed(4)} SOL is below the ${MIN_SOL_FOR_GAS} gas minimum — trades are BLOCKED until you top up.`
+                : `⛽ Low SOL warning: ${solBal.toFixed(4)} SOL remaining (warn threshold: ${LOW_SOL_WARN_SOL}, block threshold: ${MIN_SOL_FOR_GAS}). Top up soon to keep trades flowing.`
+            );
+            console.warn(`[Mercer Watchdog] ${critical ? 'CRITICAL' : 'Warning'} — SOL balance low: ${solBal.toFixed(4)} SOL`);
+          }
+        } catch (err) {
+          console.warn(`[Mercer Watchdog] SOL balance check failed: ${err.message}`);
+        }
+      }
 
       // ── Update high-water marks ──────────────────────────────────────────────
       let trailingData = loadTrailingData();
