@@ -532,9 +532,19 @@ function updateReasonDisplay(result, triggeredBy = null) {
   C1.push('{bold}TRADES{/}');
 
   // Recent decisions — add now so this cycle is included
+  const _ex = execution;
+  const execStatus =
+    decision.action === 'hold'                              ? 'hold'
+    : _ex?.status === 'throttled'                          ? 'throttled'
+    : _ex?.status === 'skipped_low_confidence'             ? 'low conf'
+    : _ex?.trades?.some(t => t.status === 'executed')      ? 'executed'
+    : _ex?.trades?.some(t => t.status === 'failed')        ? 'failed'
+    : _ex?.status === 'dry_run' || _ex?.trades?.some(t => t.status === 'dry_run') ? 'dry run'
+    : _ex?.status === 'skipped'                            ? 'skipped'
+    : '';
   localDecisionHistory.push({
     action: decision.action ?? '?', confidence: conf,
-    timestamp: new Date(), triggeredBy: triggeredBy ?? 'manual',
+    timestamp: new Date(), triggeredBy: triggeredBy ?? 'manual', execStatus,
   });
   if (localDecisionHistory.length > 6) localDecisionHistory.shift();
 
@@ -564,9 +574,17 @@ function updateReasonDisplay(result, triggeredBy = null) {
   C1.push(DIV);
   C1.push('{bold}HISTORY{/}');
   for (const entry of [...localDecisionHistory].reverse()) {
-    const ac   = ACTION_COLOR[entry.action] ?? 'white-fg';
+    const ac  = ACTION_COLOR[entry.action] ?? 'white-fg';
     const time = entry.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-    C1.push(` ${time}  {${ac}}{bold}${entry.action.toUpperCase().padEnd(9)}{/}  ${entry.confidence}%`);
+    const stag =
+      entry.execStatus === 'executed'  ? '  {green-fg}✓ executed{/}'
+      : entry.execStatus === 'dry run' ? '  {cyan-fg}~ dry run{/}'
+      : entry.execStatus === 'throttled' ? '  {grey-fg}⏸ throttled{/}'
+      : entry.execStatus === 'low conf'  ? '  {grey-fg}⏸ low conf{/}'
+      : entry.execStatus === 'failed'    ? '  {red-fg}✗ failed{/}'
+      : entry.execStatus === 'skipped'   ? '  {grey-fg}– skipped{/}'
+      : '';
+    C1.push(` ${time}  {${ac}}{bold}${entry.action.toUpperCase().padEnd(9)}{/}  ${entry.confidence}%${stag}`);
   }
 
   // ── C2 — RATIONALE (center column = dashboard center) ─────────────────────
@@ -911,7 +929,15 @@ function loadLastDecision() {
         ...localDecisionHistory.slice().reverse().map(e => {
           const eac  = AC_MAP[e.action] ?? 'white-fg';
           const ets  = e.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-          return ` ${ets}  {${eac}}{bold}${e.action.toUpperCase().padEnd(9)}{/}  ${e.confidence}%`;
+          const stag =
+            e.execStatus === 'executed'   ? '  {green-fg}✓ executed{/}'
+            : e.execStatus === 'dry run'  ? '  {cyan-fg}~ dry run{/}'
+            : e.execStatus === 'throttled'? '  {grey-fg}⏸ throttled{/}'
+            : e.execStatus === 'low conf' ? '  {grey-fg}⏸ low conf{/}'
+            : e.execStatus === 'failed'   ? '  {red-fg}✗ failed{/}'
+            : e.execStatus === 'skipped'  ? '  {grey-fg}– skipped{/}'
+            : '';
+          return ` ${ets}  {${eac}}{bold}${e.action.toUpperCase().padEnd(9)}{/}  ${e.confidence}%${stag}`;
         }),
       ];
 
