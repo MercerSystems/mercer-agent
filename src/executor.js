@@ -118,30 +118,35 @@ async function executeTrade(trade, market, jupiterApi) {
     }
   }
 
-  // ── SOL sell gas reserve — never sell lamports needed to pay fees ─────────
-  // When selling SOL (native token), Jupiter draws from the same lamport balance
-  // used for gas. If rawAmount >= actual balance, the tx simulation fails with
-  // "insufficient lamports". Fetch live balance and cap to (balance - gas reserve).
-  if (type === 'sell' && asset === 'SOL' && !DRY_RUN && process.env.SOLANA_RPC_URL) {
+  // ── SOL sell reserve — keep $4 in SOL at all times (gas + buffer) ──────────
+  // Reserve = max(MIN_SOL_FOR_GAS lamports, $MIN_SOL_VALUE_USD worth of SOL).
+  // This prevents both failed simulations and running dry on gas between cycles.
+  if (type === 'sell' && asset === 'SOL' && process.env.SOLANA_RPC_URL) {
     try {
-      const minSolForGas   = parseFloat(process.env.MIN_SOL_FOR_GAS) || 0.01;
-      const gasReserve     = Math.ceil(minSolForGas * 1e9); // lamports
+      const minSolForGas  = parseFloat(process.env.MIN_SOL_FOR_GAS)    || 0.01;
+      const minSolValueUsd = parseFloat(process.env.MIN_SOL_VALUE_USD)  || 4;
+      const solPrice       = market['SOL']?.price ?? 0;
+      const minSolByValue  = solPrice > 0 ? minSolValueUsd / solPrice : minSolForGas;
+      const reserveSol     = Math.max(minSolForGas, minSolByValue);
+      const reserveLamports = Math.ceil(reserveSol * 1e9);
+
       const keypair        = loadKeypair();
       const connection     = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
       const liveBalance    = await connection.getBalance(keypair.publicKey);
-      const maxSellLamports = liveBalance - gasReserve;
+      const maxSellLamports = liveBalance - reserveLamports;
+
       if (maxSellLamports <= 0) {
-        const msg = `Insufficient SOL to sell — balance ${(liveBalance / 1e9).toFixed(4)} SOL is at or below gas reserve`;
+        const msg = `SOL sell blocked — balance ${(liveBalance / 1e9).toFixed(4)} SOL ($${((liveBalance / 1e9) * solPrice).toFixed(2)}) is at or below $${minSolValueUsd} reserve`;
         console.warn(`[Mercer Executor] BLOCKED — ${msg}`);
         return { ...trade, status: 'blocked', reason: msg };
       }
       if (rawAmount > maxSellLamports) {
-        console.log(`[Mercer Executor] SOL sell capped — ${rawAmount} → ${maxSellLamports} lamports (gas reserve: ${minSolForGas} SOL)`);
+        console.log(`[Mercer Executor] SOL sell capped — preserving $${minSolValueUsd} reserve (${reserveSol.toFixed(4)} SOL)`);
         rawAmount = maxSellLamports;
-        amountUsd = parseFloat(((rawAmount / 1e9) * (market['SOL']?.price ?? 0)).toFixed(2));
+        amountUsd = parseFloat(((rawAmount / 1e9) * solPrice).toFixed(2));
       }
     } catch (err) {
-      console.warn(`[Mercer Executor] SOL balance check skipped: ${err.message}`);
+      console.warn(`[Mercer Executor] SOL reserve check skipped: ${err.message}`);
     }
   }
 

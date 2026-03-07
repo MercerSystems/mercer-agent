@@ -158,6 +158,7 @@ Stop-Loss:       ${mandate.stopLossPct}% from entry (watchdog auto-executes)
 Trailing Stop:   ${mandate.trailingStopPct ?? 'not set'}% from peak price (watchdog auto-executes)
 Profit Ladder:   ${mandate.takeProfitLadder?.map((r, i) => `rung ${i + 1}: sell ${(r.sellFraction * 100).toFixed(0)}% at +${r.pct}%`).join(', ') ?? 'not set'} (watchdog auto-executes)
 Max Drawdown:    ${mandate.maxDrawdownPct}%
+SOL Reserve:     Always keep ≥$4 in SOL for gas fees — executor enforces this on sells
 Min Market Cap:  $${mandate.minMarketCapUsd ? (mandate.minMarketCapUsd / 1e6).toFixed(0) + 'M' : 'none'} (tokens below this are blocked)
 Min Volume:      $${mandate.minVolume24hUsd ? (mandate.minVolume24hUsd / 1e6).toFixed(0) + 'M' : 'none'}/day (illiquid tokens blocked for buys)
 ${mandate.notes ? `Notes: ${mandate.notes}` : ''}

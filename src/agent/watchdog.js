@@ -29,8 +29,9 @@ const WATCHDOG_INTERVAL_MS  = parseInt(process.env.WATCHDOG_INTERVAL_MS, 10) || 
 const ALERT_1H_DROP_PCT     = parseFloat(process.env.ALERT_1H_DROP_PCT)    || 5.0;
 const MOMENTUM_BUY_1H_PCT   = parseFloat(process.env.MOMENTUM_BUY_1H_PCT)  || 7.0;
 const MOMENTUM_BUY_CD_MS    = 2 * 60 * 60 * 1000; // 2h between triggers for same symbol
-const LOW_SOL_WARN_SOL      = parseFloat(process.env.LOW_SOL_WARN_SOL)     || 0.03; // warn below this
-const MIN_SOL_FOR_GAS       = parseFloat(process.env.MIN_SOL_FOR_GAS)      || 0.01; // executor blocks below this
+const MIN_SOL_VALUE_USD     = parseFloat(process.env.MIN_SOL_VALUE_USD)    || 4;    // keep $4 in SOL always
+const LOW_SOL_WARN_SOL      = parseFloat(process.env.LOW_SOL_WARN_SOL)     || 0.06; // warn below this (~$5 at ~$85)
+const MIN_SOL_FOR_GAS       = parseFloat(process.env.MIN_SOL_FOR_GAS)      || 0.01; // hard floor for tx fees
 const LOW_SOL_ALERT_CD_MS   = 4 * 60 * 60 * 1000; // alert at most once every 4h
 
 // Per-symbol cooldown — prevents re-firing the same trigger within 15 minutes
@@ -92,10 +93,12 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
           if (solBal < LOW_SOL_WARN_SOL) {
             _lastLowSolAlert = Date.now();
             const critical = solBal < MIN_SOL_FOR_GAS;
+            // Approximate SOL price from market if available (populated later in cycle — use rough estimate here)
+            const solUsdApprox = (solBal * 85).toFixed(2); // rough estimate for alert text
             await sendAlert(
               critical
-                ? `⛽ CRITICAL: SOL balance ${solBal.toFixed(4)} SOL is below the ${MIN_SOL_FOR_GAS} gas minimum — trades are BLOCKED until you top up.`
-                : `⛽ Low SOL warning: ${solBal.toFixed(4)} SOL remaining (warn threshold: ${LOW_SOL_WARN_SOL}, block threshold: ${MIN_SOL_FOR_GAS}). Top up soon to keep trades flowing.`
+                ? `⛽ CRITICAL: SOL balance ${solBal.toFixed(4)} SOL (~$${solUsdApprox}) is below the gas minimum — trades are BLOCKED. Top up to at least $${MIN_SOL_VALUE_USD} in SOL.`
+                : `⛽ Low SOL warning: ${solBal.toFixed(4)} SOL (~$${solUsdApprox}) — target is $${MIN_SOL_VALUE_USD}+ in SOL for gas. Top up soon.`
             );
             console.warn(`[Mercer Watchdog] ${critical ? 'CRITICAL' : 'Warning'} — SOL balance low: ${solBal.toFixed(4)} SOL`);
           }
