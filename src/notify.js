@@ -21,9 +21,22 @@ export async function sendAlert(message) {
   }
 }
 
-export function tradeAlertText(trade, status) {
-  const sign = trade.type === 'buy' ? '📈' : '📉';
-  return `${sign} ${trade.type.toUpperCase()} ${trade.asset} $${trade.amountUsd?.toFixed(2)} [${status}]`;
+export function tradeAlertText(trade, status, { entryPrice, portfolioTotal } = {}) {
+  const isSell = trade.type === 'sell' || (trade.type === 'swap');
+  const sign   = trade.type === 'buy' ? '📈' : isSell ? '📉' : '🔄';
+  const symbol = trade.type === 'swap'
+    ? `${trade.fromAsset}→${trade.toAsset}`
+    : trade.asset;
+
+  let pnlStr = '';
+  if (isSell && entryPrice && trade.type !== 'swap') {
+    const currentPrice = trade.amountUsd && trade.quantity ? trade.amountUsd / trade.quantity : null;
+    const pnlPct = currentPrice && entryPrice > 0 ? ((currentPrice - entryPrice) / entryPrice) * 100 : null;
+    if (pnlPct != null) pnlStr = ` | PnL: ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+  }
+
+  const portfolioStr = portfolioTotal ? ` | Portfolio: $${portfolioTotal.toFixed(2)}` : '';
+  return `${sign} ${trade.type.toUpperCase()} ${symbol} $${trade.amountUsd?.toFixed(2)} [${status}]${pnlStr}${portfolioStr}`;
 }
 
 export function stopLossAlertText(symbols) {

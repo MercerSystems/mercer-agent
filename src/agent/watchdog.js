@@ -19,7 +19,7 @@ import {
 } from './trailing-stops.js';
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { scanStopLosses, enforceMandate, MANDATE_PRESETS } from './mandate.js';
-import { recordDecision }                from './reasoning.js';
+import { recordDecision, getRecentDecisions } from './reasoning.js';
 import { executeDecision }               from '../executor.js';
 import { sendAlert, stopLossAlertText }  from '../notify.js';
 import { signalEarlyReason }             from '../trade-signal.js';
@@ -78,6 +78,13 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
       // Served from cache (120s TTL) so no extra CoinGecko calls vs reasoning cycle.
       const market = await fetchSolanaMarketMap(400);
       if (!market || Object.keys(market).length === 0) return;
+
+      // Seed micro-cap tokens (not in CoinGecko map) from live wallet prices
+      for (const h of basePortfolio.holdings ?? []) {
+        if (h.token && h.price > 0 && !market[h.token]) {
+          market[h.token] = { price: h.price, change24h: h.change24h ?? null, change1h: null };
+        }
+      }
 
       const persisted = loadEntryPrices();
       const { holdings: enrichedHoldings, updated } = applyEntryPrices(basePortfolio.holdings, market, persisted);
@@ -245,12 +252,25 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
       // Fires an early reasoning cycle so Claude can evaluate the breakout immediately
       // rather than waiting up to 10 minutes for the next scheduled cycle.
       const heldSymbols = new Set(livePortfolio.holdings.map(h => h.symbol));
+
+      // Build 2h recently-sold set from decision history — respect same re-entry block as Claude
+      const RESELL_BLOCK_MS = 2 * 60 * 60 * 1000;
+      const recentlySoldSymbols = new Set(
+        getRecentDecisions(20)
+          .flatMap(d => (d.trades ?? []).map(t => ({ time: d.timestamp, type: t.type, sym: t.type === 'swap' ? t.fromAsset : t.asset })))
+          .filter(t => (t.type === 'sell' || t.type === 'swap') && t.sym && (Date.now() - new Date(t.time).getTime()) < RESELL_BLOCK_MS)
+          .map(t => t.sym?.toUpperCase())
+      );
+
       for (const [symbol, data] of Object.entries(market)) {
         if (heldSymbols.has(symbol) || symbol === 'USDC') continue;
         if ((data.change1h ?? 0) < MOMENTUM_BUY_1H_PCT) continue;
         // Volume and market cap gates
         if (mandate.minVolume24hUsd  && (data.volume24hUsd  ?? 0) < mandate.minVolume24hUsd)  continue;
         if (mandate.minMarketCapUsd  && (data.marketCapUsd  ?? 0) < mandate.minMarketCapUsd)  continue;
+
+        // Skip recently-sold tokens — same 2h re-entry block as the Claude prompt
+        if (recentlySoldSymbols.has(symbol.toUpperCase())) continue;
 
         // Per-symbol 2h cooldown to avoid hammering Claude on the same breakout
         const cdKey = `${symbol}:momentumBuy`;

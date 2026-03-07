@@ -329,18 +329,23 @@ router.post('/', async (req, res, next) => {
       const minIntervalSec   = parseInt(process.env.MIN_CYCLE_INTERVAL, 10) || 300;
       const SKIP_BELOW       = 0.50; // below this confidence, reasoning.js already strips buys — no need to execute
       const secSinceLast     = lastExecutionAt ? (Date.now() - lastExecutionAt) / 1000 : Infinity;
-      const throttled        = autoExecute && secSinceLast < minIntervalSec;
-      const lowConfidence    = (decision.confidence ?? 1) < SKIP_BELOW;
+      const confidence       = decision.confidence ?? 1;
+      const bypassThrottle   = confidence >= 0.75 && decision.action !== 'hold';
+      const throttled        = autoExecute && secSinceLast < minIntervalSec && !bypassThrottle;
+      const lowConfidence    = confidence < SKIP_BELOW;
 
       if (autoExecute && !throttled && !lowConfidence && decision.action !== 'hold') {
-        const tradeDesc = decision.trades?.map(t => `${t.asset} ${t.type} $${t.amountUsd}`).join(', ') || decision.action;
-        console.log(`[Mercer] Auto-executing: ${decision.action} — ${tradeDesc}`);
+        const tradeDesc = decision.trades?.map(t => t.type === 'swap' ? `${t.fromAsset}→${t.toAsset} $${t.amountUsd}` : `${t.asset} ${t.type} $${t.amountUsd}`).join(', ') || decision.action;
+        const bypassNote = bypassThrottle && secSinceLast < minIntervalSec ? ` [throttle bypassed — confidence ${(confidence * 100).toFixed(0)}%]` : '';
+        console.log(`[Mercer] Auto-executing: ${decision.action} — ${tradeDesc}${bypassNote}`);
         execution = await executeDecision(decision, market);
         if (execution?.trades?.some(t => t.status === 'executed' || t.status === 'dry_run')) {
           lastExecutionAt = Date.now();
+          const currentEntryPricesForAlert = loadEntryPrices();
+          const portfolioTotal = livePortfolio?.totalValueUsd ?? null;
           const alerts = execution.trades
             .filter(t => t.status === 'executed' || t.status === 'dry_run')
-            .map(t => tradeAlertText(t, t.status));
+            .map(t => tradeAlertText(t, t.status, { entryPrice: currentEntryPricesForAlert[t.asset], portfolioTotal }));
           if (alerts.length > 0) await sendAlert(alerts.join('\n'));
         }
         // Record outcomes for win/loss tracking

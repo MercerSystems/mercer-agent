@@ -17,6 +17,7 @@ import bs58 from 'bs58';
 import { sendAlert } from './notify.js';
 import { resolveToken } from './market/token-registry.js';
 import { signalTrade } from './trade-signal.js';
+import { addToBlockedBuys } from './agent/blocked-buys.js';
 
 // ─── Debug: confirm env is loaded at module evaluation time ───────────────────
 console.log('[Mercer Executor] WALLET_PRIVATE_KEY:', process.env.WALLET_PRIVATE_KEY
@@ -98,12 +99,41 @@ async function executeSwapTrade(trade, market, jupiterApi) {
     throw new Error(`Calculated raw amount is 0 for swap ${fromAsset} → ${toAsset} $${amountUsd} — trade too small`);
   }
 
+  // ── MIN_TRADE_USD floor ────────────────────────────────────────────────────
+  const minTradeUsd = parseFloat(process.env.MIN_TRADE_USD) || 3;
+  if (amountUsd < minTradeUsd) {
+    const msg = `Swap too small: $${amountUsd.toFixed(2)} below $${minTradeUsd} minimum — skipped to avoid wasting gas`;
+    console.log(`[Mercer Executor] ${msg}`);
+    return { ...trade, status: 'skipped', reason: msg };
+  }
+
   // ── MAX_TRADE_USD cap ──────────────────────────────────────────────────────
   const maxTradeUsd = parseFloat(process.env.MAX_TRADE_USD) || 35;
   if (amountUsd > maxTradeUsd) {
     console.log(`[Mercer Executor] Swap trimmed — $${amountUsd} → $${maxTradeUsd} (MAX_TRADE_USD cap)`);
     amountUsd = maxTradeUsd;
     rawAmount = Math.round((amountUsd / fromPrice) * Math.pow(10, fromTokenInfo.decimals));
+  }
+
+  // ── Full-exit snap — use exact on-chain balance when swapping ≥90% of position ─
+  // Prevents EAT/other micro-cap dust from price-rounding on token-to-token swaps.
+  if (!DRY_RUN && process.env.SOLANA_RPC_URL) {
+    try {
+      const kp   = loadKeypair();
+      const conn = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+      const { value: tokenAccounts } = await conn.getParsedTokenAccountsByOwner(
+        kp.publicKey, { mint: new PublicKey(inputMint) }
+      );
+      const onChainRaw    = tokenAccounts[0]?.account.data.parsed.info.tokenAmount.amount   ?? '0';
+      const onChainUi     = tokenAccounts[0]?.account.data.parsed.info.tokenAmount.uiAmount ?? 0;
+      const onChainRawInt = Number(onChainRaw);
+      if (onChainRawInt > 0 && rawAmount >= Math.floor(onChainRawInt * 0.90)) {
+        console.log(`[Mercer Executor] ${ts()} — Full-exit snap: swapping entire ${fromAsset} balance (${onChainUi}) to avoid dust`);
+        rawAmount = onChainRawInt;
+      }
+    } catch (err) {
+      console.warn(`[Mercer Executor] Full-exit snap skipped: ${err.message}`);
+    }
   }
 
   // ── Get quote ──────────────────────────────────────────────────────────────
@@ -113,18 +143,22 @@ async function executeSwapTrade(trade, market, jupiterApi) {
   console.log(`[Mercer Executor]   outputMint:  ${outputMint}  (${toAsset})`);
   console.log(`[Mercer Executor]   amount:      ${rawAmount} (raw) = $${amountUsd} USD`);
 
+  const fromCap    = market[fromAsset]?.marketCapUsd ?? Infinity;
+  const toCap      = market[toAsset]?.marketCapUsd   ?? Infinity;
+  const isMicroCap = fromCap < 5_000_000 || toCap < 5_000_000;
+  const slippageBps = isMicroCap ? 500 : 100;
+
   let quote;
   try {
-    const fromCap    = market[fromAsset]?.marketCapUsd ?? Infinity;
-    const toCap      = market[toAsset]?.marketCapUsd   ?? Infinity;
-    const isMicroCap = fromCap < 5_000_000 || toCap < 5_000_000;
-    const slippageBps = isMicroCap ? 300 : 100;
     quote = await jupiterApi.quoteGet({ inputMint, outputMint, amount: rawAmount, slippageBps });
   } catch (err) {
     let body = '';
     try { body = err.response ? await err.response.text() : ''; } catch { body = '(could not read response body)'; }
+    const msg = `Jupiter quote failed for swap ${label}: ${err.message} — ${body}`;
     console.error(`[Mercer Executor] Quote FAILED for SWAP ${label}: ${err.message} — ${body}`);
-    throw new Error(`Jupiter quote failed for swap ${label}: ${err.message} — ${body}`);
+    if (body.includes('TOKEN_NOT_TRADABLE')) { addToBlockedBuys(toAsset); addToBlockedBuys(fromAsset); }
+    await sendAlert(`Warning: Swap skipped — ${msg}`);
+    return { ...trade, status: 'blocked', reason: msg };
   }
 
   console.log(
@@ -183,9 +217,10 @@ async function executeSwapTrade(trade, market, jupiterApi) {
     const keypair = loadKeypair();
     const swapResult = await jupiterApi.swapPost({
       swapRequest: {
-        quoteResponse:    quote,
-        userPublicKey:    keypair.publicKey.toBase58(),
-        wrapAndUnwrapSol: true,
+        quoteResponse:           quote,
+        userPublicKey:           keypair.publicKey.toBase58(),
+        wrapAndUnwrapSol:        true,
+        dynamicComputeUnitLimit: true,
       },
     });
 
@@ -234,6 +269,14 @@ async function executeTrade(trade, market, jupiterApi) {
   }
 
   const { mint: assetMint, decimals: assetDecimals } = tokenInfo;
+
+  // ── MIN_TRADE_USD floor — skip tiny trades not worth the gas ──────────────
+  const minTradeUsd = parseFloat(process.env.MIN_TRADE_USD) || 3;
+  if (amountUsd < minTradeUsd) {
+    const msg = `Trade too small: $${amountUsd.toFixed(2)} is below $${minTradeUsd} minimum — skipped to avoid wasting gas`;
+    console.log(`[Mercer Executor] ${msg}`);
+    return { ...trade, status: 'skipped', reason: msg };
+  }
 
   // Convert USD trade size to raw token input amount
   let inputMint, outputMint, rawAmount;
@@ -349,7 +392,10 @@ async function executeTrade(trade, market, jupiterApi) {
     console.error(`[Mercer Executor]   error:    ${err.message}`);
     console.error(`[Mercer Executor]   status:   ${err.response?.status ?? 'n/a'}`);
     console.error(`[Mercer Executor]   body:     ${body}`);
-    throw new Error(`Jupiter quote failed for ${type} ${asset}: ${err.message} — ${body}`);
+    const msg = `Jupiter quote failed for ${type} ${asset}: ${err.message} — ${body}`;
+    if (body.includes('TOKEN_NOT_TRADABLE')) addToBlockedBuys(asset);
+    await sendAlert(`Warning: Trade skipped — ${msg}`);
+    return { ...trade, status: 'blocked', reason: msg };
   }
 
   console.log(
@@ -416,9 +462,10 @@ async function executeTrade(trade, market, jupiterApi) {
     const keypair = loadKeypair();
     swapResult = await jupiterApi.swapPost({
       swapRequest: {
-        quoteResponse:    quote,
-        userPublicKey:    keypair.publicKey.toBase58(),
-        wrapAndUnwrapSol: true,
+        quoteResponse:           quote,
+        userPublicKey:           keypair.publicKey.toBase58(),
+        wrapAndUnwrapSol:        true,
+        dynamicComputeUnitLimit: true,
       },
     });
 

@@ -95,9 +95,15 @@ If you can't answer these cleanly, hold cash instead.
 - If the portfolio shows a SOL holding, ignore it for rebalancing purposes.
 
 **When to hold USDC:**
-- Broad market weakness — multiple tokens down across the board, no sector leading
-- No narrative with clear momentum — market is directionless
+- Broad market weakness — multiple tokens down across the board, no sector leading, AND no ★★ or ★★★ signals in the universe
 - After a stop-loss: wait for re-entry cooldown and a confirmed new setup with a story behind it
+- You already have 3+ active positions sized to mandate limits — no room to add without cutting something first
+
+**When NOT to hold USDC (deploy it):**
+- Any ★★★ signal exists — high conviction entry, deploy 30–35% of deployable USDC
+- Any ★★ signal with confirming 24h momentum — deploy 20–25% of deployable USDC
+- You have >40% deployable USDC and ★★+ signals exist — idling cash is a mistake, not a safe choice
+- Weekend low liquidity is NOT a reason to hold cash if momentum signals are present — micro-caps move on weekends too
 
 The mandate's filters (minMarketCapUsd, minVolume24hUsd) are hard limits — respect them. Everything else is judgment. Within those guardrails, be precise, conviction-driven, and willing to act. The system is designed to protect you from catastrophic losses; use the space it gives you.
 
@@ -434,9 +440,29 @@ export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_
     return `  ${time}  ${label}  $${(t.amountUsd ?? 0).toFixed(2)}`;
   });
 
+  // ── Recently sold tokens — flag re-entries within 2h ─────────────────────
+  const now120 = Date.now() - 2 * 60 * 60 * 1000;
+  const recentlySold = new Map();
+  for (const t of recentTrades) {
+    const sym = t.type === 'swap' ? t.fromAsset : t.asset;
+    if (!sym || (t.type !== 'sell' && t.type !== 'swap')) continue;
+    const ts = t.time ? new Date(t.time).getTime() : 0;
+    if (ts > now120) {
+      const minsAgo = Math.round((Date.now() - ts) / 60_000);
+      if (!recentlySold.has(sym)) recentlySold.set(sym, minsAgo);
+    }
+  }
+  const recentSellWarnings = [...recentlySold.entries()].map(([sym, minsAgo]) =>
+    `  ⛔ ${sym} sold ${minsAgo}m ago — DO NOT re-enter unless a completely new ★★★ signal with volume spike has appeared since the exit. "It's still running" is not enough.`
+  );
+
   const drawdown = portfolio.peakValueUsd > 0
     ? (((portfolio.peakValueUsd - portfolio.totalValueUsd) / portfolio.peakValueUsd) * 100).toFixed(2)
     : '0.00';
+
+  // ── Deployable USDC ───────────────────────────────────────────────────────
+  const cashFloor      = ((mandate.minCashPct ?? 0) / 100) * portfolio.totalValueUsd;
+  const deployableUsdc = Math.max(0, (portfolio.cashUsd ?? 0) - cashFloor);
 
   const universeSize = Object.keys(market).length;
 
@@ -466,10 +492,13 @@ ${bottomMovers.join('\n') || '  No data'}
 ${fadingPositions.length > 0 ? `\n## Position Alerts — Momentum Fading (consider exit)\n${fadingPositions.join('\n')}` : ''}
 ${stalePositions.length > 0 ? `\n## Rotation Candidates — Stale/Declining Positions\nThese holdings have no active momentum. The 400-token universe has better opportunities right now. Exit these and redeploy.\n${stalePositions.join('\n')}` : ''}
 ## Portfolio State
-Total Value: $${portfolio.totalValueUsd.toLocaleString()}
-Peak Value:  $${portfolio.peakValueUsd.toLocaleString()}
-Drawdown:    ${drawdown}%
-Cash (USDC): $${portfolio.cashUsd.toLocaleString()}
+Total Value:      $${portfolio.totalValueUsd.toLocaleString()}
+Peak Value:       $${portfolio.peakValueUsd.toLocaleString()}
+Drawdown:         ${drawdown}%
+Cash (USDC):      $${portfolio.cashUsd.toLocaleString()}
+Deployable USDC:  $${deployableUsdc.toFixed(2)} (after ${mandate.minCashPct ?? 0}% cash floor)
+Suggested sizing: $${(deployableUsdc * 0.25).toFixed(2)}–$${(deployableUsdc * 0.35).toFixed(2)} per position (25–35% of deployable)
+${deployableUsdc > portfolio.totalValueUsd * 0.4 ? `⚠ CAPITAL IDLE: Over 40% of portfolio is deployable USDC. If ANY ★★ or ★★★ signal exists, you MUST deploy. Holding cash when clear momentum signals are present is a guaranteed loss of opportunity.` : ''}
 
 Holdings:
 ${portfolioLines}
@@ -479,7 +508,7 @@ ${marketLines || '  No held token market data available'}
 
 ## Market Notes${correlationNote || '\nNo correlated moves detected.'}
 ${recentTradeLines.length > 0 ? `\n## Recent Trades (your last ${recentTradeLines.length})\n${recentTradeLines.join('\n')}` : ''}
-${rebuyWarnings.length > 0 ? `\n## Re-Buy Scrutiny — tokens bought in the last 60 min\nValid reasons to add: (1) new ★★★ signal with volume spike that wasn't present at entry, (2) sector narrative just ignited and this is the leader, (3) price held support and bounced with volume after your buy. NOT valid: "still looks good", "below max allocation", "momentum continuing".\n${rebuyWarnings.join('\n')}` : ''}
+${recentSellWarnings.length > 0 ? `\n## Recently Sold — Re-Entry Block (last 2h)\n${recentSellWarnings.join('\n')}` : ''}${rebuyWarnings.length > 0 ? `\n## Re-Buy Scrutiny — tokens bought in the last 60 min\nValid reasons to add: (1) new ★★★ signal with volume spike that wasn't present at entry, (2) sector narrative just ignited and this is the leader, (3) price held support and bounced with volume after your buy. NOT valid: "still looks good", "below max allocation", "momentum continuing".\n${rebuyWarnings.join('\n')}` : ''}
 
 ## Active Mandate
 Risk Tier:       ${mandate.riskTier}

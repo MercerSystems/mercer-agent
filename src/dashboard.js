@@ -82,7 +82,7 @@ const pnlChart = grid.set(4, 8, 3, 4, contrib.line, {
 });
 
 const reasonBox = grid.set(7, 0, 4, 12, blessed.box, {
-  label:        ' ◈  Claude Decisions  ◈ ',
+  label:        ' Claude Decisions ',
   tags:         true,
   keys:         true,
   vi:           true,
@@ -178,58 +178,95 @@ function wordWrap(text, width) {
 
 // ─── Table + watermark renderer ───────────────────────────────────────────────
 
-const COL_W   = [6, 12, 10, 11, 6, 8, 8];
+const COL_W   = [8, 12, 10, 11, 6, 8, 8];
 const COL_SEP = '  ';
 const TABLE_W = COL_W.reduce((a, b) => a + b, 0) + COL_SEP.length * (COL_W.length - 1);
 
+function loadTrailingData() {
+  try { return JSON.parse(readFileSync(join(process.cwd(), 'data', 'trailing-stops.json'), 'utf8')); } catch { return {}; }
+}
+
 function renderTable(portfolio, market = {}) {
   const { holdings, totalValue } = portfolio;
-  const entryPrices = loadEntryPrices();
+  const entryPrices  = loadEntryPrices();
+  const trailingData = loadTrailingData();
+  const ladder       = lastMandate?.takeProfitLadder ?? [];
 
   const divider = COL_W.map(w => '─'.repeat(w)).join(COL_SEP);
 
-  const headers = [
+  const reserveHeaders = [
     '{cyan-fg}{bold}Token{/}',
     '{cyan-fg}{bold}Balance{/}',
     '{cyan-fg}{bold}Price{/}',
     '{cyan-fg}{bold}Value{/}',
-    '{cyan-fg}{bold}%Port{/}',
-    '{cyan-fg}{bold}P&L{/}',
-    '{cyan-fg}{bold}24h{/}',
+    '{cyan-fg}{bold}Port %{/}',
+    '',
+    '',
+  ];
+
+  const positionHeaders = [
+    '{cyan-fg}{bold}Token{/}',
+    '{cyan-fg}{bold}Balance{/}',
+    '{cyan-fg}{bold}Price{/}',
+    '{cyan-fg}{bold}Value{/}',
+    '{cyan-fg}{bold}Port %{/}',
+    '{cyan-fg}{bold}P&L ${/}',
+    '{cyan-fg}{bold}P&L %{/}',
   ];
 
   const lines = [
-    headers.map((h, i) => padCol(h, COL_W[i])).join(COL_SEP),
+    positionHeaders.map((h, i) => padCol(h, COL_W[i])).join(COL_SEP),
     divider,
   ];
 
   let totalPnlUsd = 0;
   let totalPnlKnown = false;
 
-  for (const h of holdings) {
-    const ch       = market[h.token]?.change24h ?? null;
-    const chColor  = ch == null ? 'grey-fg' : ch >= 0 ? 'green-fg' : 'red-fg';
-    const chStr    = ch == null ? 'N/A' : `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}%`;
+  const RESERVE_TOKENS = new Set(['USDC', 'SOL']);
+  const tradeHoldings   = holdings.filter(h => !RESERVE_TOKENS.has(h.token));
+  const reserveHoldings = holdings.filter(h => RESERVE_TOKENS.has(h.token));
 
+  function renderHoldingRow(h) {
     const ep       = entryPrices[h.token];
     const pnlPct   = ep && ep > 0 ? ((h.price - ep) / ep) * 100 : null;
     const pnlUsd   = pnlPct != null ? (h.value * pnlPct) / (100 + pnlPct) : null;
     const pnlColor = pnlPct == null ? 'grey-fg' : pnlPct >= 0 ? 'green-fg' : 'red-fg';
     const pnlStr   = pnlUsd == null ? 'N/A' : `${pnlUsd >= 0 ? '+' : ''}$${Math.abs(pnlUsd).toFixed(2)}`;
-
     if (pnlUsd != null) { totalPnlUsd += pnlUsd; totalPnlKnown = true; }
+    // Next ladder rung target
+    const hitRungs   = new Set(trailingData?.ladderTriggered?.[h.token] ?? []);
+    const nextRung   = ladder.find((r, i) => !hitRungs.has(i));
+    const pnlPctStr  = pnlPct == null ? '—' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+    const targetStr  = nextRung ? ` {grey-fg}→+${nextRung.pct}%{/}` : '';
 
-    const row = [
+    return [
       `{white-fg}${h.token}{/}`,
       '{white-fg}' + fmtQty(h.balance) + '{/}',
       '{white-fg}' + fmtPrice(h.price) + '{/}',
       '{white-fg}' + fmtUSD(h.value) + '{/}',
-      '{grey-fg}' + ((h.value / totalValue) * 100).toFixed(1) + '%{/}',
+      '{white-fg}' + ((h.value / totalValue) * 100).toFixed(1) + '%{/}',
       `{${pnlColor}}${pnlStr}{/}`,
-      `{${chColor}}${chStr}{/}`,
-    ];
-    lines.push(row.map((cell, i) => padCol(cell, COL_W[i])).join(COL_SEP));
+      `{${pnlColor}}${pnlPctStr}{/}${targetStr}`,
+    ].map((cell, i) => padCol(cell, COL_W[i])).join(COL_SEP);
   }
+
+  // ── Reserve section (SOL + USDC) above positions ─────────────────────────
+  if (reserveHoldings.length > 0) {
+    for (const h of reserveHoldings) {
+      lines.push([
+        padCol(`{white-fg}${h.token}{/}`,                                        COL_W[0]),
+        padCol('{white-fg}' + fmtQty(h.balance) + '{/}',                        COL_W[1]),
+        padCol('{white-fg}' + fmtPrice(h.price) + '{/}',                        COL_W[2]),
+        padCol('{white-fg}' + fmtUSD(h.value) + '{/}',                          COL_W[3]),
+        padCol('{white-fg}' + ((h.value / totalValue) * 100).toFixed(1) + '%{/}', COL_W[4]),
+        padCol('',                                                               COL_W[5]),
+        padCol('',                                                               COL_W[6]),
+      ].join(COL_SEP));
+    }
+  }
+
+  if (tradeHoldings.length > 0) lines.push(divider);
+  for (const h of tradeHoldings) lines.push(renderHoldingRow(h));
 
   // Session P&L row
   const sessionPnlUsd = sessionBaseline ? totalValue - sessionBaseline : null;
@@ -238,8 +275,17 @@ function renderTable(portfolio, market = {}) {
   const sPnlStr       = sessionPnlUsd == null ? ''
     : `${sessionPnlUsd >= 0 ? '+' : ''}${fmtUSD(sessionPnlUsd)} (${sessionPnlPct >= 0 ? '+' : ''}${sessionPnlPct.toFixed(2)}%)`;
 
-  const totalPnlColor = !totalPnlKnown ? 'grey-fg' : totalPnlUsd >= 0 ? 'green-fg' : 'red-fg';
-  const totalPnlStr   = totalPnlKnown ? `${totalPnlUsd >= 0 ? '+' : ''}$${Math.abs(totalPnlUsd).toFixed(2)}` : '';
+  const totalPnlColor  = !totalPnlKnown ? 'grey-fg' : totalPnlUsd >= 0 ? 'green-fg' : 'red-fg';
+  const totalPnlStr    = totalPnlKnown ? `${totalPnlUsd >= 0 ? '+' : ''}$${Math.abs(totalPnlUsd).toFixed(2)}` : '';
+  // Total cost basis = sum of (value - pnlUsd) across known holdings
+  const totalCost      = totalPnlKnown ? (tradeHoldings.reduce((s, h) => {
+    const ep = entryPrices[h.token];
+    const pct = ep && ep > 0 ? ((h.price - ep) / ep) * 100 : null;
+    const pu  = pct != null ? (h.value * pct) / (100 + pct) : null;
+    return s + (pu != null ? h.value - pu : 0);
+  }, 0)) : 0;
+  const totalPnlPct    = totalCost > 0 ? (totalPnlUsd / totalCost) * 100 : null;
+  const totalPnlPctStr = totalPnlPct != null ? `${totalPnlPct >= 0 ? '+' : ''}${totalPnlPct.toFixed(2)}%` : '';
 
   lines.push(divider);
   lines.push([
@@ -249,7 +295,7 @@ function renderTable(portfolio, market = {}) {
     padCol(`{bold}${fmtUSD(totalValue)}{/}`, COL_W[3]),
     padCol('{bold}100%{/}',                  COL_W[4]),
     padCol(`{${totalPnlColor}}{bold}${totalPnlStr}{/}`, COL_W[5]),
-    padCol('',                               COL_W[6]),
+    padCol(`{${totalPnlColor}}{bold}${totalPnlPctStr}{/}`, COL_W[6]),
   ].join(COL_SEP));
 
   if (sPnlStr) {
@@ -794,8 +840,14 @@ function setStatus(mandate, violations, blocked, msg) {
       ? `{red-fg}⚠ ${violations.length} violation(s){/}`
       : '{green-fg}✓ passed{/}';
 
+  const cashUsd        = lastPortfolio?.holdings?.find(h => h.token === 'USDC')?.value ?? 0;
+  const totalVal       = lastPortfolio?.totalValue ?? 0;
+  const cashFloor      = mandate ? ((mandate.minCashPct ?? 0) / 100) * totalVal : 0;
+  const deployable     = Math.max(0, cashUsd - cashFloor);
+  const deployableStr  = totalVal > 0 ? `  {white-fg}$${deployable.toFixed(0)} deployable{/}` : '';
+
   const mandateStr = mandate
-    ? `{cyan-fg}${MANDATE_PRESET.toUpperCase()}{/} · max ${mandate.maxPositionPct}% · SL ${mandate.stopLossPct}%`
+    ? `{cyan-fg}${MANDATE_PRESET.toUpperCase()}{/} · max ${mandate.maxPositionPct}% · SL ${mandate.stopLossPct}%${deployableStr}`
     : MANDATE_PRESET.toUpperCase();
 
   const walletTag = walletSource === 'live'
@@ -896,7 +948,7 @@ setInterval(() => {
     if (spinnerActive) {
       spinnerActive = false;
       tableBox.setLabel(' Portfolio Holdings ');
-      reasonBox.setLabel(' ◈  Claude Decisions  ◈ ');
+      reasonBox.setLabel(' Claude Decisions ');
       screen.render();
     }
     return;
