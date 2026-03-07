@@ -457,136 +457,125 @@ function updatePnlChart(history, market = {}) {
 function updateReasonDisplay(result, triggeredBy = null) {
   const { decision, violations, blocked, execution, stopLossBypass, takeProfitBypass } = result;
 
-  const actionColor = {
-    hold:      'yellow-fg',
-    rebalance: 'cyan-fg',
-    buy:       'green-fg',
-    sell:      'red-fg',
-    alert:     'magenta-fg',
-  }[decision.action] ?? 'white-fg';
+  const ACTION_COLOR = {
+    hold: 'yellow-fg', rebalance: 'cyan-fg', buy: 'green-fg', sell: 'red-fg', alert: 'magenta-fg',
+  };
+  const actionColor = ACTION_COLOR[decision.action] ?? 'white-fg';
+  const conf        = ((decision.confidence ?? 0) * 100).toFixed(0);
+  const bar         = confBar(parseFloat(conf));
 
-  const conf       = ((decision.confidence ?? 0) * 100).toFixed(0);
-  const bar        = confBar(parseFloat(conf));
-  const blockedTag = blocked ? '{red-fg}⛔ BLOCKED{/}' : '';
-  const bypassTag  = stopLossBypass   ? ' {red-fg}{bold}⚡ STOP-LOSS{/}'
-                   : takeProfitBypass  ? ' {green-fg}{bold}✓ TAKE-PROFIT{/}'
-                   : '';
-  const trigTag    = triggeredBy ? `  {grey-fg}↳ ${triggeredBy}{/}` : '';
+  // Build inline status tags for header
+  const execTrades  = execution?.trades ?? [];
+  const nDone       = execTrades.filter(t => t.status === 'executed').length;
+  const nDry        = execTrades.filter(t => t.status === 'dry_run').length;
+  const nFail       = execTrades.filter(t => t.status === 'failed' || t.status === 'blocked').length;
+  const execSummary = execTrades.length > 0
+    ? (nDone  > 0 ? `  {green-fg}✓ ${nDone} on-chain{/}` : '') +
+      (nDry   > 0 ? `  {cyan-fg}~ ${nDry} dry run{/}` : '') +
+      (nFail  > 0 ? `  {red-fg}✗ ${nFail} failed{/}` : '')
+    : execution?.status === 'throttled'    ? `  {white-fg}⏸ throttled{/}`
+    : execution?.status === 'skipped_low_confidence' ? `  {white-fg}⏸ low confidence{/}`
+    : '';
+
+  const bypassTag = stopLossBypass  ? `  {red-fg}⚡ STOP-LOSS{/}`
+                  : takeProfitBypass ? `  {green-fg}✓ TAKE-PROFIT{/}`
+                  : '';
+  const trigTag   = triggeredBy ? `  {white-fg}↳ ${triggeredBy}{/}` : '';
 
   const lines = [];
 
-  // ── Header: action + confidence + status ─────────────────────────────────
+  // ── Line 1: ACTION  bar  conf%  exec-summary  bypass  trigger ────────────
   lines.push(
     `{bold}{${actionColor}}${(decision.action ?? '?').toUpperCase()}{/}` +
     `  ${bar} {bold}${conf}%{/}` +
-    (blockedTag  ? `  ${blockedTag}`  : '') +
-    (bypassTag   ? `  ${bypassTag}`   : '') +
-    trigTag
+    (blocked ? '  {red-fg}⛔ BLOCKED{/}' : '') +
+    bypassTag + execSummary + trigTag
   );
 
-  // ── Execution results — top priority ────────────────────────────────────
-  if (execution) {
-    if (execution.status === 'throttled') {
-      lines.push(`{grey-fg}⏸ Throttled — ${execution.secSinceLast}s since last trade{/}`);
-    } else if (execution.status === 'skipped_low_confidence') {
-      lines.push(`{grey-fg}⏸ Skipped — confidence below ${((execution.skipBelow ?? 0.5) * 100).toFixed(0)}% floor{/}`);
-    } else if (execution.trades?.length > 0) {
-      lines.push('{cyan-fg}── Executed ──────────────────────────────────{/}');
-      for (const t of execution.trades) {
-        const side = t.type ?? '?';
-        const sign = side === 'buy' ? '+' : '−';
-        const amt  = t.amountUsd != null ? fmtUSD(t.amountUsd) : '';
-        if (t.status === 'executed') {
-          lines.push(`  {green-fg}{bold}✓ ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}{/}`);
-        } else if (t.status === 'dry_run') {
-          lines.push(`  {cyan-fg}~ ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}  DRY RUN{/}`);
-        } else if (t.status === 'blocked') {
-          lines.push(`  {red-fg}✗ ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}  blocked{/}`);
-        } else if (t.status === 'failed') {
-          lines.push(`  {red-fg}⚠ ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}  FAILED{/}`);
-        } else {
-          lines.push(`  {grey-fg}— ${sign} ${side.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${amt}  ${t.status}{/}`);
-        }
-      }
-    }
-  }
+  // ── Line 2: separator ─────────────────────────────────────────────────────
+  lines.push('{white-fg}─────────────────────────────────────────────{/}');
 
-  // ── Rationale ────────────────────────────────────────────────────────────
-  const rationale = decision.rationale ?? 'N/A';
-  lines.push('{cyan-fg}── Rationale ─────────────────────────────────{/}');
-  // Word-wrap rationale at ~70 chars
-  const words = rationale.split(' ');
-  let line = '  ';
-  for (const w of words) {
-    if (line.length + w.length > 72) { lines.push(`{grey-fg}${line.trimEnd()}{/}`); line = '  '; }
-    line += w + ' ';
-  }
-  if (line.trim()) lines.push(`{grey-fg}${line.trimEnd()}{/}`);
+  // ── Rationale: single line, clipped ──────────────────────────────────────
+  const rat = (decision.rationale ?? 'N/A');
+  lines.push(rat.length > 74 ? rat.slice(0, 72) + '…' : rat);
 
-  // ── Proposed trades (compact — no inline reason) ─────────────────────────
-  const proposedTrades = decision.trades ?? [];
-  if (proposedTrades.length > 0) {
-    lines.push('{cyan-fg}── Proposed ──────────────────────────────────{/}');
-    for (const t of proposedTrades) {
-      const tc   = t.type === 'buy' ? 'green-fg' : 'red-fg';
-      const sign = t.type === 'buy' ? '+' : '−';
-      lines.push(`  {${tc}}${sign} ${t.type.toUpperCase().padEnd(4)} ${(t.asset ?? '').padEnd(8)} ${fmtUSD(t.amountUsd)}{/}`);
-    }
-    // Trade reasons as dimmed details below
+  // ── Trade table: unified proposed + execution status ─────────────────────
+  // Prefer execution.trades (have status); fall back to decision.trades (proposed)
+  const tradesToShow = execTrades.length > 0 ? execTrades : (decision.trades ?? []);
+  if (tradesToShow.length > 0) {
     lines.push('');
-    for (const t of proposedTrades) {
-      if (t.reason) {
-        const prefix = `  ${t.asset}: `;
-        const rWords = t.reason.split(' ');
-        let rLine = prefix;
-        for (const w of rWords) {
-          if (rLine.length + w.length > 72) { lines.push(`{grey-fg}${rLine.trimEnd()}{/}`); rLine = ' '.repeat(prefix.length); }
-          rLine += w + ' ';
-        }
-        if (rLine.trim()) lines.push(`{grey-fg}${rLine.trimEnd()}{/}`);
+    for (const t of tradesToShow) {
+      const side    = (t.type ?? '?').toUpperCase();
+      const asset   = (t.asset ?? '').padEnd(9);
+      const amt     = t.amountUsd != null ? fmtUSD(t.amountUsd).padEnd(8) : '        ';
+      const sign    = (t.type === 'buy') ? '+' : '−';
+
+      let icon, color, statusLabel;
+      if (t.status === 'executed') {
+        icon = '✓'; color = 'green-fg'; statusLabel = 'on-chain';
+      } else if (t.status === 'dry_run') {
+        icon = '~'; color = 'cyan-fg';  statusLabel = 'dry run';
+      } else if (t.status === 'blocked') {
+        icon = '✗'; color = 'red-fg';   statusLabel = t.reason ? t.reason.slice(0, 32) : 'blocked';
+      } else if (t.status === 'failed') {
+        icon = '⚠'; color = 'red-fg';   statusLabel = 'FAILED';
+      } else if (t.status === 'skipped') {
+        icon = '—'; color = 'white-fg'; statusLabel = 'skipped';
+      } else {
+        // proposed (no status yet)
+        icon = '·'; color = t.type === 'buy' ? 'green-fg' : 'red-fg'; statusLabel = 'proposed';
       }
+
+      lines.push(
+        `  {${color}}{bold}${icon}{/} {${color}}${sign} ${side.padEnd(5)} ${asset} ${amt}{/}` +
+        `{white-fg}${statusLabel}{/}`
+      );
     }
-  } else {
-    lines.push('{grey-fg}No trades proposed.{/}');
+  } else if (decision.action === 'hold') {
+    lines.push('');
+    lines.push('  {white-fg}· Holding — no trades{/}');
   }
 
-  // ── Violations / mandate enforcements (deduplicated, compact) ────────────
-  const allFlags = [
-    ...(decision.riskFlags ?? []).filter(f => !f.startsWith('BLOCKED') && !f.startsWith('TRIMMED')),
-    ...violations,
+  // ── Flags: deduped, max 4, critical first ─────────────────────────────────
+  const rawFlags = [
+    ...(decision.riskFlags ?? []).filter(f =>
+      !f.startsWith('BLOCKED') && !f.startsWith('TRIMMED') &&
+      !f.startsWith('AUTO STOP') && !f.startsWith('AUTO-CONVERTED')
+    ),
+    ...violations.filter(v => !v.startsWith('TRIMMED')),
   ];
-  if (allFlags.length > 0) {
-    const unique = [...new Set(allFlags)];
-    lines.push('{yellow-fg}── Flags ─────────────────────────────────────{/}');
-    for (const f of unique) {
-      const color = f.startsWith('BLOCKED') || f.startsWith('HALT') ? 'red-fg' : 'yellow-fg';
-      const icon  = f.startsWith('BLOCKED') || f.startsWith('HALT') ? '✗' : '⚠';
-      // Truncate long flag lines
-      const display = f.length > 70 ? f.slice(0, 68) + '…' : f;
-      lines.push(`  {${color}}${icon} ${display}{/}`);
+  const uniqueFlags = [...new Set(rawFlags)];
+  if (uniqueFlags.length > 0) {
+    lines.push('');
+    const shown = uniqueFlags.slice(0, 4);
+    for (const f of shown) {
+      const isCrit = f.startsWith('BLOCKED') || f.startsWith('HALT') || f.startsWith('STOP');
+      const color  = isCrit ? 'red-fg' : 'yellow-fg';
+      const icon   = isCrit ? '✗' : '⚠';
+      const clip   = f.length > 68 ? f.slice(0, 66) + '…' : f;
+      lines.push(`  {${color}}${icon} ${clip}{/}`);
+    }
+    if (uniqueFlags.length > 4) {
+      lines.push(`  {white-fg}  + ${uniqueFlags.length - 4} more flag(s){/}`);
     }
   }
 
-  // ── Recent decisions history ──────────────────────────────────────────────
-  // Record in local history (cap at 8)
+  // ── Recent decisions ──────────────────────────────────────────────────────
   localDecisionHistory.push({
-    action:      decision.action ?? '?',
-    confidence:  conf,
-    timestamp:   new Date(),
-    triggeredBy: triggeredBy ?? 'manual',
+    action: decision.action ?? '?', confidence: conf,
+    timestamp: new Date(), triggeredBy: triggeredBy ?? 'manual',
   });
-  if (localDecisionHistory.length > 8) localDecisionHistory.shift();
+  if (localDecisionHistory.length > 6) localDecisionHistory.shift();
 
-  lines.push('{cyan-fg}── Recent ────────────────────────────────────{/}');
+  lines.push('');
+  lines.push('{white-fg}─────────────────────────────────────────────{/}');
   for (const entry of [...localDecisionHistory].reverse()) {
-    const ac = {
-      hold: 'yellow-fg', rebalance: 'cyan-fg', buy: 'green-fg', sell: 'red-fg', alert: 'magenta-fg',
-    }[entry.action] ?? 'white-fg';
+    const ac   = ACTION_COLOR[entry.action] ?? 'white-fg';
     const time = entry.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-    const trig = (entry.triggeredBy ?? '').slice(0, 18);
+    const act  = entry.action.toUpperCase().padEnd(9);
+    const trig = (entry.triggeredBy ?? '').slice(0, 20);
     lines.push(
-      `  {grey-fg}${time}{/}  {${ac}}{bold}${entry.action.toUpperCase().padEnd(9)}{/}` +
-      `{grey-fg}${entry.confidence}%  ${trig}{/}`
+      `  {white-fg}${time}{/}  {${ac}}{bold}${act}{/}  {white-fg}${entry.confidence}%  ${trig}{/}`
     );
   }
 
@@ -817,14 +806,16 @@ function loadLastDecision() {
     // Show the most recent decision in the box immediately
     const last = hist[hist.length - 1];
     if (last) {
-      const ts = new Date(last.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-      const ac  = { hold:'yellow-fg', rebalance:'cyan-fg', buy:'green-fg', sell:'red-fg', alert:'magenta-fg' }[last.action] ?? 'white-fg';
+      const ts   = new Date(last.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const ac   = { hold:'yellow-fg', rebalance:'cyan-fg', buy:'green-fg', sell:'red-fg', alert:'magenta-fg' }[last.action] ?? 'white-fg';
       const conf = ((last.confidence ?? 0) * 100).toFixed(0);
+      const rat  = (last.rationale ?? 'N/A');
+      const ratClip = rat.length > 74 ? rat.slice(0, 72) + '…' : rat;
       reasonBox.setContent(
-        `{bold}{${ac}}${(last.action ?? '?').toUpperCase()}{/}  ${confBar(parseFloat(conf))} {bold}${conf}%{/}  {grey-fg}${ts} · persisted{/}\n` +
-        `{cyan-fg}── Rationale ─────────────────────────────────{/}\n` +
-        `{grey-fg}  ${last.rationale ?? 'N/A'}{/}\n\n` +
-        `{grey-fg}Waiting for live reasoning cycle...{/}`
+        `{bold}{${ac}}${(last.action ?? '?').toUpperCase()}{/}  ${confBar(parseFloat(conf))} {bold}${conf}%{/}  {white-fg}↳ ${ts} · persisted{/}\n` +
+        `{white-fg}─────────────────────────────────────────────{/}\n` +
+        `${ratClip}\n\n` +
+        `{white-fg}Waiting for live data…{/}`
       );
       reasonBox.setScrollPerc(0);
     }
