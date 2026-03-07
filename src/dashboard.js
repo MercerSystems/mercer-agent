@@ -454,15 +454,6 @@ function updatePnlChart(history, market = {}) {
   }]);
 }
 
-// Strip blessed markup tags to get visual character width
-function stripTags(s) { return s.replace(/\{[^}]+\}/g, ''); }
-
-// Pad a tagged string to a visual column width
-function padCol(s, width) {
-  const pad = Math.max(0, width - stripTags(s).length);
-  return s + ' '.repeat(pad);
-}
-
 function updateReasonDisplay(result, triggeredBy = null) {
   const { decision, violations, blocked, execution, stopLossBypass, takeProfitBypass } = result;
 
