@@ -26,7 +26,7 @@ import { recordStopOut }                 from './stop-cooldown.js';
 
 const WATCHDOG_INTERVAL_MS  = parseInt(process.env.WATCHDOG_INTERVAL_MS, 10) || 30_000;
 const ALERT_1H_DROP_PCT     = parseFloat(process.env.ALERT_1H_DROP_PCT)    || 5.0;
-const MOMENTUM_BUY_1H_PCT   = parseFloat(process.env.MOMENTUM_BUY_1H_PCT)  || 10.0;
+const MOMENTUM_BUY_1H_PCT   = parseFloat(process.env.MOMENTUM_BUY_1H_PCT)  || 7.0;
 const MOMENTUM_BUY_CD_MS    = 2 * 60 * 60 * 1000; // 2h between triggers for same symbol
 
 // Per-symbol cooldown — prevents re-firing the same trigger within 15 minutes

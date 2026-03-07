@@ -124,18 +124,25 @@ export async function reason({ portfolio, market, mandate, trigger = 'scheduled_
   // Parse structured decision from Claude's response
   const rawDecision = parseDecision(raw);
 
-  // Confidence-scaled position sizing — scale buy amounts proportionally to Claude's confidence.
-  // Formula: amount * (0.5 + 0.5 * confidence) — high confidence gets full size, low gets 50-75%.
-  // This makes Mercer bet bigger when it's sure and smaller when uncertain.
+  // Tiered confidence sizing — bet bigger when sure, smaller when uncertain, skip when very low.
+  // Tiers: ≥0.75 → 100%, 0.62-0.74 → 65%, 0.50-0.61 → 35%, <0.50 → skip (no buys).
   const confidence = rawDecision.confidence ?? 1.0;
-  const scaledDecision = confidence < 1.0 ? {
+  const confidenceScale =
+    confidence >= 0.75 ? 1.00 :
+    confidence >= 0.62 ? 0.65 :
+    confidence >= 0.50 ? 0.35 : 0.0;
+
+  const scaledDecision = confidenceScale < 1.0 ? {
     ...rawDecision,
     trades: (rawDecision.trades ?? []).map(t => {
       if (t.type !== 'buy') return t;
-      const scale  = 0.5 + 0.5 * confidence;
-      const scaled = parseFloat((t.amountUsd * scale).toFixed(2));
-      return { ...t, amountUsd: scaled, reason: `${t.reason} [scaled to ${(scale * 100).toFixed(0)}% for ${(confidence * 100).toFixed(0)}% confidence]` };
-    }),
+      if (confidenceScale === 0.0) {
+        // Mark for removal — returns null, filtered below
+        return null;
+      }
+      const scaled = parseFloat((t.amountUsd * confidenceScale).toFixed(2));
+      return { ...t, amountUsd: scaled, reason: `${t.reason} [sized to ${(confidenceScale * 100).toFixed(0)}% for ${(confidence * 100).toFixed(0)}% confidence]` };
+    }).filter(Boolean),
   } : rawDecision;
 
   // Run mandate enforcement layer with full market data

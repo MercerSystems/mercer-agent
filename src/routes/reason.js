@@ -290,10 +290,10 @@ router.post('/', async (req, res, next) => {
     if (!blocked) {
       const autoExecute      = process.env.AUTO_EXECUTE === 'true';
       const minIntervalSec   = parseInt(process.env.MIN_CYCLE_INTERVAL, 10) || 300;
-      const minConfidence    = parseFloat(process.env.MIN_CONFIDENCE) || 0.68;
+      const SKIP_BELOW       = 0.50; // below this confidence, reasoning.js already strips buys — no need to execute
       const secSinceLast     = lastExecutionAt ? (Date.now() - lastExecutionAt) / 1000 : Infinity;
       const throttled        = autoExecute && secSinceLast < minIntervalSec;
-      const lowConfidence    = (decision.confidence ?? 1) < minConfidence;
+      const lowConfidence    = (decision.confidence ?? 1) < SKIP_BELOW;
 
       if (autoExecute && !throttled && !lowConfidence && decision.action !== 'hold') {
         const tradeDesc = decision.trades?.map(t => `${t.asset} ${t.type} $${t.amountUsd}`).join(', ') || decision.action;
@@ -311,8 +311,8 @@ router.post('/', async (req, res, next) => {
           await sendAlert(`Warning: Trade execution FAILED for ${failed.map(t => t.asset).join(', ')} — check logs and retry manually.`);
         }
       } else if (lowConfidence) {
-        console.log(`[Mercer] Skipped — confidence ${((decision.confidence ?? 0) * 100).toFixed(0)}% below minimum ${(minConfidence * 100).toFixed(0)}%`);
-        execution = { status: 'skipped_low_confidence', confidence: decision.confidence, minConfidence };
+        console.log(`[Mercer] Skipped — confidence ${((decision.confidence ?? 0) * 100).toFixed(0)}% below ${(SKIP_BELOW * 100).toFixed(0)}% minimum (buys already stripped by tiered sizing)`);
+        execution = { status: 'skipped_low_confidence', confidence: decision.confidence, skipBelow: SKIP_BELOW };
       } else if (throttled) {
         console.log(`[Mercer] Throttled — ${Math.round(secSinceLast)}s since last trade (min: ${minIntervalSec}s)`);
         execution = { status: 'throttled', secSinceLast: Math.round(secSinceLast), minIntervalSec };

@@ -31,18 +31,18 @@ export const MANDATE_PRESETS = {
     riskTier: 'moderate',
     maxPositionPct:   35,
     stopLossPct:      20,
-    trailingStopPct:  15,
+    trailingStopPct:  10,
     takeProfitPct:    40,
     takeProfitLadder: [
-      { pct: 30, sellFraction: 0.25 },
-      { pct: 55, sellFraction: 0.25 },
-      { pct: 90, sellFraction: 0.50 },
+      { pct: 12, sellFraction: 0.33 },
+      { pct: 25, sellFraction: 0.33 },
+      { pct: 40, sellFraction: 0.34 },
     ],
     maxDrawdownPct:   25,
-    minCashPct:       15,         // Always keep ≥15% of portfolio as USDC dry powder
-    minMarketCapUsd:  50_000_000, // Only trade tokens with >$50M market cap
+    minCashPct:       20,         // Always keep ≥20% of portfolio as USDC dry powder
+    minMarketCapUsd:  15_000_000, // Only trade tokens with >$15M market cap
     minVolume24hUsd:  5_000_000,  // Only trade tokens with >$5M daily volume
-    notes: 'Balanced growth. Pick the best opportunities across the Solana ecosystem — evaluate all tokens equally by momentum and market conditions.',
+    notes: 'Momentum trader. Fast entries, fast exits — redeploy profits quickly. Small-cap Solana tokens with strong momentum. Never overstay a position.',
   },
   aggressive: {
     riskTier: 'aggressive',
