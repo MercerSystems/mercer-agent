@@ -22,7 +22,9 @@
 
 ## What Mercer Does
 
-Mercer is a fully autonomous on-chain portfolio agent. It connects directly to your Solana wallet, monitors live market conditions across the top 150 Solana ecosystem tokens, and uses Claude (claude-sonnet-4-6) to make and execute trading decisions — all while enforcing a strict risk mandate to protect your capital.
+Mercer is a fully autonomous on-chain portfolio agent. It connects directly to your Solana wallet, monitors live market conditions across **400+ Solana ecosystem tokens**, and uses Claude (claude-sonnet-4-6) to discover, enter, and exit positions — all while enforcing a strict risk mandate to protect your capital.
+
+Its primary edge: **small-cap discovery**. Mercer hunts for micro and small-cap tokens ($1M–$20M market cap) gaining real traction — early momentum plays before the crowd arrives. As the portfolio grows, it scales into larger-cap assets for stability.
 
 **It runs continuously. It trades real money. It protects itself.**
 
@@ -33,48 +35,91 @@ Mercer is a fully autonomous on-chain portfolio agent. It connects directly to y
 ```
 Solana Wallet (live SPL balances)
            ↓
-CoinGecko — top 150 Solana ecosystem tokens (dynamic, no hardcoded list)
+CoinGecko — 400+ Solana ecosystem tokens across 3 fetches:
+  • Top 250 by market cap (page 1)
+  • Tokens 251–500 by market cap (page 2)
+  • Top 75 by 24h volume (new launch discovery)
+           ↓
+Volume baseline tracker — rolling spike ratio per token (~96min window)
            ↓
 Portfolio state builder (USD values, PnL vs entry, drawdown)
            ↓
 ┌─────────────────────────────────────────────┐
 │           30s Watchdog (always on)          │
-│  • Entry-based stop-loss                    │
+│  • Entry-based stop-loss (micro-cap aware)  │
 │  • Trailing stop (from all-time peak)       │
 │  • Profit ladder (staged partial exits)     │
 │  • 1h momentum alert                        │
 └─────────────────────────────────────────────┘
            ↓
-Claude reasoning loop (every 10 min)
-  → Analyzes all 150 tokens for opportunities
-  → Returns structured decision: hold/buy/sell/rebalance
+Claude reasoning loop (every 15 min, adaptive)
+  → Market regime classification (BULL RUN / CORRECTION / BEAR / etc.)
+  → Momentum leaders, sustained movers, new launch signals
+  → Stale/declining position rotation candidates
+  → Returns structured decision: hold/buy/sell/swap
            ↓
 Mandate enforcement layer
-  → Position size, market cap, drawdown checks
-  → Pre-flight USDC + SOL gas balance checks
+  → Position size, market cap, volume, drawdown checks
+  → Stop-loss cooldown, permanent buy block list
+  → Pre-flight balance checks
            ↓
 Jupiter aggregator (best-price swap execution)
+  → Buy: USDC → token
+  → Sell: token → USDC
+  → Swap: token → token (direct rotation, no USDC round-trip)
            ↓
-Discord notification + dashboard update
+Dashboard update + macOS notifications
 ```
 
 ---
 
 ## Key Features
 
+### Small-Cap Discovery Strategy
+
+Mercer's primary focus scales with portfolio size:
+
+| Portfolio Size | Strategy |
+|---|---|
+| Under $2K | Micro/small-cap only ($1M–$20M market cap) — asymmetric upside |
+| $2K–$10K | Mix: small-cap momentum + established tokens |
+| Over $10K | Shift toward large-cap Solana ecosystem leaders |
+
+Claude scores every opportunity using **conviction stars** (★★★/★★/★) based on 1h/24h momentum and volume spike ratio, then sizes positions accordingly. No loyalty to existing holdings — stale or declining positions are rotation candidates.
+
+### New Launch Discovery
+
+Three parallel market data fetches ensure Mercer sees opportunities across the full spectrum:
+
+- **Market cap sort (pages 1+2):** The established universe — top 500 tokens by market cap
+- **Volume sort:** Top 75 tokens by 24h volume — surfaces new launches ranking low by market cap but getting heavy attention right now
+- **Volume spike ratio:** Each token's current volume vs. its rolling 96-minute baseline. A spike ratio >3× signals unusual interest. Turnover >50% (volume/marketCap) is a new launch fingerprint.
+
+### Token-to-Token Swaps
+
+Mercer can rotate directly from a declining position into a new one without a USDC round-trip. Swap trades (`type: "swap"`) specify `fromAsset` and `toAsset` — executed natively through Jupiter's routing engine.
+
+### Market Regime Awareness
+
+Claude classifies the current macro environment from SOL's 7d/24h/1h performance before making any decision:
+
+| Regime | Behavior |
+|---|---|
+| BULL RUN | Bias toward entries, ride momentum |
+| RECOVERY | Cautious adds on confirmation |
+| PULLBACK | Tighten stops, reduce new exposure |
+| CORRECTION | Defensive — hold cash, cut losers |
+| BEAR | Capital preservation mode |
+| VOLATILE | Small size, fast exits |
+| CONSOLIDATION | Wait for breakout confirmation |
+
 ### Autonomous Trading
 - Connects to any Solana wallet via private key
 - Executes live swaps through Jupiter aggregator (best-price routing across all DEXes)
+- Token-2022 program support for newer SPL tokens
 - `MAX_TRADE_USD` cap and `MIN_CYCLE_INTERVAL` throttle prevent over-trading
 - Price impact guard blocks trades with >2% slippage
 - USDC and SOL gas balance verified on-chain before every trade
-
-### Dynamic Market Coverage
-- Discovers the **top 150 Solana ecosystem tokens** by market cap from CoinGecko — no hardcoded list
-- Market context updates every 2 minutes; Claude sees all 150 when making decisions
-- New tokens that gain traction automatically appear in Claude's view
-- Stablecoins filtered out — USDC is the cash position, never traded against
-- Solana mint addresses resolved dynamically via CoinGecko coin detail API (24h cache)
 
 ### Multi-Layer Protection (Watchdog)
 The watchdog runs every **30 seconds**, independently of the reasoning cycle:
@@ -82,31 +127,49 @@ The watchdog runs every **30 seconds**, independently of the reasoning cycle:
 | Protection | What it does |
 |---|---|
 | **Entry stop-loss** | Exits fully if PnL drops below threshold from entry price |
+| **Micro-cap stop-loss** | Tighter 10% stop for tokens under $5M market cap (vs. standard 15%) |
 | **Trailing stop** | Exits if price drops X% from its all-time peak — protects unrealized gains |
-| **Profit ladder** | Staged partial sells at multiple PnL milestones (e.g. sell 25% at +30%, another 25% at +55%) |
-| **1h momentum alert** | Discord alert if any holding drops >5% in 1 hour |
+| **Profit ladder** | Staged partial sells at multiple PnL milestones (sell 33% at +12%, +30%, +60%) |
+| **Stop-loss cooldown** | Blocks re-entry into a token for a cooldown period after a stop-out |
+| **Permanent buy block** | `data/blocked-buys.json` — tokens that should never be bought |
 | **Max drawdown halt** | Blocks all trading if total portfolio drawdown exceeds mandate limit |
-| **Health monitoring** | Discord alert if watchdog itself fails 5 consecutive checks |
+| **Health monitoring** | Alert if watchdog itself fails 5 consecutive checks |
 
 All protection state (high-water marks, ladder progress, entry prices, peak portfolio value) is **persisted to disk** and survives restarts.
 
 ### Risk Mandate System
+
 Every decision is validated against an active mandate before execution:
 
-| Preset | Max Position | Stop-Loss | Trailing Stop | Max Drawdown | Min Market Cap |
-|---|---|---|---|---|---|
-| `conservative` | 20% | 5% | 8% | 15% | $500M |
-| `moderate` | 30% | 10% | 15% | 25% | $50M |
-| `aggressive` | 40% | 15% | 25% | 35% | $5M |
+| Preset | Max Position | Stop-Loss | Micro-Cap Stop | Trailing Stop | Max Drawdown | Min Market Cap |
+|---|---|---|---|---|---|---|
+| `conservative` | 20% | 10% | — | 8% | 15% | $500M |
+| `moderate` | 35% | 15% | 10% (<$5M cap) | 10% | 25% | $1M |
+| `aggressive` | 50% | 35% | — | 25% | 40% | $5M |
 
 The `minMarketCapUsd` filter automatically blocks illiquid tokens — no allowlist to maintain.
 
+### Confidence-Based Position Sizing
+
+Claude reports a confidence score (0–1) with every decision. Positions are automatically scaled:
+
+| Confidence | Trade Size |
+|---|---|
+| ≥ 0.75 | 100% of proposed size |
+| 0.62–0.74 | 65% of proposed size |
+| 0.50–0.61 | 35% of proposed size |
+| < 0.50 | No buys — hold or sell only |
+
+### Re-Buy Scrutiny
+
+If Claude proposes buying a token purchased within the last 60 minutes, the reasoning context flags it explicitly with the previous purchase time and price. Claude must justify re-entry with a clear reason (e.g. new catalyst, momentum acceleration) or skip the trade.
+
 ### Terminal Dashboard
 A full blessed-contrib terminal UI showing:
-- Live portfolio table with balance, USD value, portfolio %, PnL vs entry, 24h change
-- P&L chart with live 1s updates
-- Market data for held tokens
-- Latest Claude decision with full rationale, trades, risk flags, confidence score
+- Live portfolio table: balance, USD value, portfolio %, PnL vs entry, 24h change
+- P&L chart with live 1s updates (60/240/300 data point windows)
+- Market box: all-token ticker or individual token detail view
+- Latest Claude decision: action, confidence bar, trades, risk flags, execution log, recent history
 - Session cost tracker, countdown to next reasoning cycle
 - **Ask Mercer** — natural language Q&A about the portfolio (`[a]` key)
 
@@ -155,14 +218,32 @@ MAX_PRICE_IMPACT_PCT=2.0   # max acceptable Jupiter price impact %
 ### 3. Start the server
 
 ```bash
-node src/server.js
+npm run watchdog    # auto-restarts on crash
 ```
 
 ### 4. Start the dashboard (separate terminal)
 
 ```bash
-node src/dashboard.js
+npm run dashboard
 ```
+
+### 5. Ask Mercer (optional, separate terminal)
+
+```bash
+npm run ask
+```
+
+---
+
+## npm Scripts
+
+| Script | Description |
+|---|---|
+| `npm run serve` | Start API server once (port 3000) |
+| `npm run watchdog` | Start server with auto-restart on crash |
+| `npm run dashboard` | Launch terminal dashboard |
+| `npm run ask` | Launch Ask Mercer interactive chat |
+| `npm start` | Run autonomous agent loop |
 
 ---
 
@@ -174,10 +255,10 @@ node src/dashboard.js
 | `p` | Refresh portfolio + prices (no Claude call) |
 | `a` | Open Ask Mercer chat in new terminal window |
 | `1` / `4` / `0` | Chart window: 60 / 240 / 300 data points |
-| `m` | Market detail view — pick a token |
+| `m` | Market box — pick token or return to all-token ticker |
 | `c` | Chart mode — portfolio or individual token |
-| `h` | Trade history overlay |
-| `↑` `↓` | Scroll decision box |
+| `h` | Trade history overlay (last 20 trades) |
+| `↑` `↓` / PgUp PgDn | Scroll decision box |
 | `q` | Quit (5s confirmation) |
 
 ---
@@ -188,9 +269,8 @@ node src/dashboard.js
 src/
 ├── server.js                 Express API entry point (port 3000)
 ├── dashboard.js              blessed-contrib terminal dashboard
-├── ask-terminal.js           Interactive Ask Mercer chat terminal
-├── executor.js               Jupiter swap execution layer
-├── notify.js                 Discord webhook notifications
+├── executor.js               Jupiter swap execution (buy/sell/swap)
+├── notify.js                 macOS + Discord notifications
 ├── trade-signal.js           In-process trade signal (instant dashboard refresh)
 ├── history.js                Portfolio snapshot store
 │
@@ -201,10 +281,13 @@ src/
 │   ├── reasoning.js          Anthropic SDK integration + decision parsing
 │   ├── portfolio.js          Portfolio state builder (USD values, PnL)
 │   ├── entry-prices.js       Persisted entry prices + peak value
-│   └── trailing-stops.js     High-water marks + profit ladder state
+│   ├── trailing-stops.js     High-water marks + profit ladder state
+│   ├── stop-cooldown.js      Re-entry cooldown after stop-outs
+│   └── blocked-buys.js       Permanent buy block list loader
 │
 ├── market/
-│   ├── solana-market.js      Top 150 Solana tokens from CoinGecko (primary)
+│   ├── solana-market.js      400+ Solana tokens — 3-fetch strategy (cap p1/p2 + volume)
+│   ├── volume-tracker.js     Rolling volume baseline + spike ratio per token
 │   ├── token-registry.js     Solana mint address resolver (CoinGecko + cache)
 │   └── prices.js             Legacy price fetcher (standalone CLI only)
 │
@@ -218,7 +301,13 @@ src/
 │   └── stats.js              GET /stats — engine performance metrics
 │
 └── wallet/
-    └── solana.js             Dynamic SPL token discovery via Solana RPC
+    └── solana.js             Dynamic SPL token discovery (standard + Token-2022)
+
+data/
+├── decisions.json            Persisted decision history (last 200)
+├── entry-prices.json         Token entry prices for PnL tracking
+├── blocked-buys.json         Permanently blocked tokens (never buy)
+└── volume-baseline.json      Rolling volume baseline per token
 ```
 
 ---
@@ -231,7 +320,7 @@ All endpoints served on `http://localhost:3000`.
 |---|---|---|
 | `GET` | `/portfolio` | Live wallet balances + USD values. `source: 'live'\|'mock'` |
 | `GET` | `/portfolio/history` | Portfolio value snapshots (last 500) |
-| `GET` | `/market` | Full ecosystem market map (150 tokens) |
+| `GET` | `/market` | Full ecosystem market map (400+ tokens) |
 | `GET` | `/events` | `{ lastTradeAt }` — poll for trade signals |
 | `GET` | `/mandates` | All mandate preset definitions |
 | `GET` | `/stats` | Reasoning cycle stats (avg duration, cycle count) |
