@@ -563,23 +563,23 @@ function updateReasonDisplay(result, triggeredBy = null) {
   R.push('─'.repeat(50));
 
   // Holdings snapshot: symbol, 1h, 24h
+  // lastPortfolio.holdings uses { token, balance, price, value } from /portfolio route
   if (portfolio?.holdings?.length) {
     R.push('{bold}Holdings         1h         24h{/}');
-    for (const h of portfolio.holdings.filter(h => h.symbol !== 'USDC' && !h.unpriced)) {
-      const m    = market[h.symbol] ?? {};
+    for (const h of portfolio.holdings.filter(h => h.token && h.token !== 'USDC' && (h.value ?? 0) > 0)) {
+      const sym  = h.token;
+      const m    = market[sym] ?? {};
       const h1   = m.change1h  != null ? `${m.change1h  >= 0 ? '+' : ''}${m.change1h.toFixed(2)}%`  : '  —  ';
       const h24  = m.change24h != null ? `${m.change24h >= 0 ? '+' : ''}${m.change24h.toFixed(2)}%` : '  —  ';
-      const c1   = m.change1h  >= 0 ? 'green-fg' : 'red-fg';
-      const c24  = m.change24h >= 0 ? 'green-fg' : 'red-fg';
-      R.push(
-        `  ${h.symbol.padEnd(8)}  {${c1}}${h1.padStart(7)}{/}    {${c24}}${h24.padStart(7)}{/}`
-      );
+      const c1   = (m.change1h  ?? 0) >= 0 ? 'green-fg' : 'red-fg';
+      const c24  = (m.change24h ?? 0) >= 0 ? 'green-fg' : 'red-fg';
+      R.push(`  ${sym.padEnd(8)}  {${c1}}${h1.padStart(7)}{/}    {${c24}}${h24.padStart(7)}{/}`);
     }
     R.push('');
   }
 
   // Top 1h movers from full market (not held)
-  const heldSet = new Set((portfolio?.holdings ?? []).map(h => h.symbol));
+  const heldSet = new Set((portfolio?.holdings ?? []).map(h => h.token).filter(Boolean));
   const movers = Object.entries(market)
     .filter(([sym, d]) => !heldSet.has(sym) && sym !== 'USDC' && d.change1h != null)
     .sort((a, b) => b[1].change1h - a[1].change1h)
@@ -598,21 +598,19 @@ function updateReasonDisplay(result, triggeredBy = null) {
   // Market health: up/down ratio across portfolio holdings
   if (portfolio?.holdings?.length) {
     const moves = portfolio.holdings
-      .filter(h => h.symbol !== 'USDC' && !h.unpriced && market[h.symbol]?.change24h != null)
-      .map(h => market[h.symbol].change24h);
+      .filter(h => h.token && h.token !== 'USDC' && (h.value ?? 0) > 0 && market[h.token]?.change24h != null)
+      .map(h => market[h.token].change24h);
     const up   = moves.filter(c => c > 0).length;
     const down = moves.filter(c => c < 0).length;
     const healthColor = up > down ? 'green-fg' : down > up ? 'red-fg' : 'yellow-fg';
     R.push(`{bold}Holdings Health{/}  {${healthColor}}${up} up / ${down} down{/} (24h)`);
 
-    // Cash & drawdown
-    const cashPct = portfolio.totalValueUsd > 0
-      ? ((portfolio.cashUsd / portfolio.totalValueUsd) * 100).toFixed(1)
-      : '0.0';
-    const drawdown = portfolio.peakValueUsd > 0
-      ? (((portfolio.peakValueUsd - portfolio.totalValueUsd) / portfolio.peakValueUsd) * 100).toFixed(2)
-      : '0.00';
-    R.push(`Cash  {white-fg}$${portfolio.cashUsd?.toFixed(2)} (${cashPct}%){/}    Draw  {white-fg}${drawdown}%{/}`);
+    // Cash & total
+    const totalValue = portfolio.totalValue ?? portfolio.totalValueUsd ?? 0;
+    const cashHolding = portfolio.holdings.find(h => h.token === 'USDC');
+    const cashUsd = cashHolding?.value ?? 0;
+    const cashPct = totalValue > 0 ? ((cashUsd / totalValue) * 100).toFixed(1) : '0.0';
+    R.push(`Cash  {white-fg}$${cashUsd.toFixed(2)} (${cashPct}%){/}`);
   }
 
   // ── Zip left + right columns with │ separator ─────────────────────────────
