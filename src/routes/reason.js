@@ -85,9 +85,19 @@ router.post('/', async (req, res, next) => {
       basePortfolio = { ...basePortfolio, holdings: enrichedHoldings };
       saveEntryPrices(updated);
 
-      // Restore persisted peak value so drawdown protection survives restarts
+      // Restore persisted peak value so drawdown protection survives restarts.
+      // Sanity cap: if the stored peak is >10× the live portfolio value it is almost certainly
+      // a stale value from a mock-portfolio run or a previous wallet — reset it to current value
+      // to avoid locking Claude into "99% drawdown — hold USDC forever" mode.
       const storedPeak = loadPeakValue();
-      if (storedPeak > 0) basePortfolio = { ...basePortfolio, peakValueUsd: storedPeak };
+      const currentTotal = basePortfolio.holdings?.reduce((s, h) => s + (h.valueUsd ?? 0), 0) ?? 0;
+      const peakIsStale  = storedPeak > 0 && currentTotal > 0 && storedPeak > currentTotal * 10;
+      if (peakIsStale) {
+        console.warn(`[Mercer] Stale peak detected ($${storedPeak.toFixed(2)} vs current $${currentTotal.toFixed(2)}) — resetting to current value.`);
+        savePeakValue(currentTotal);
+      } else if (storedPeak > 0) {
+        basePortfolio = { ...basePortfolio, peakValueUsd: storedPeak };
+      }
     }
 
     // Build enriched portfolio
