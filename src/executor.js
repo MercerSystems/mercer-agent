@@ -64,7 +64,8 @@ function loadKeypair() {
 
 // ─── Single trade executor ────────────────────────────────────────────────────
 async function executeTrade(trade, market, jupiterApi) {
-  const { type, asset, amountUsd } = trade;
+  const { type, asset } = trade;
+  let amountUsd = trade.amountUsd;
 
   // Buying USDC is a no-op — sell proceeds already land in USDC automatically
   if (asset === 'USDC') {
