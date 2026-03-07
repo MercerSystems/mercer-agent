@@ -112,7 +112,7 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
       trailingData = updateHighWaterMarks(livePortfolio.holdings, market, trailingData);
 
       // ── 1. Entry-based stop-loss ─────────────────────────────────────────────
-      const stopLosses = scanStopLosses(livePortfolio, mandate).filter(msg => {
+      const stopLosses = scanStopLosses(livePortfolio, mandate, market).filter(msg => {
         const sym = msg.split(':')[0].trim();
         return !isCoolingDown(sym, 'stopLoss');
       });
@@ -122,12 +122,17 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
         console.warn(`[Mercer Watchdog] Stop-loss triggered: ${stopLosses.join('; ')}`);
 
         const trades = livePortfolio.holdings
-          .filter(h => h.pnlPct <= -mandate.stopLossPct && !isCoolingDown(h.symbol, 'stopLoss'))
+          .filter(h => {
+            const cap        = market[h.symbol]?.marketCapUsd ?? Infinity;
+            const isMicroCap = mandate.microCapThresholdUsd && cap < mandate.microCapThresholdUsd;
+            const stopPct    = isMicroCap && mandate.microCapStopLossPct ? mandate.microCapStopLossPct : mandate.stopLossPct;
+            return h.pnlPct <= -stopPct && !isCoolingDown(h.symbol, 'stopLoss');
+          })
           .map(h => ({
             type:      'sell',
             asset:     h.symbol,
             amountUsd: h.valueUsd,
-            reason:    `Watchdog stop-loss: ${h.pnlPct.toFixed(2)}% breached -${mandate.stopLossPct}% threshold`,
+            reason:    `Watchdog stop-loss: ${h.pnlPct.toFixed(2)}% breached threshold`,
           }));
 
         const rawDecision = {
@@ -138,7 +143,7 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
           confidence: 1.0,
         };
 
-        const { decision, blocked } = enforceMandate(rawDecision, mandate, livePortfolio);
+        const { decision, blocked } = enforceMandate(rawDecision, mandate, livePortfolio, market);
         recordDecision(decision, blocked);
         const execution = await executeDecision(decision, market);
         syms.forEach(s => {
@@ -184,7 +189,7 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
             confidence: 1.0,
           };
 
-          const { decision, blocked } = enforceMandate(rawDecision, mandate, livePortfolio);
+          const { decision, blocked } = enforceMandate(rawDecision, mandate, livePortfolio, market);
           recordDecision(decision, blocked);
           const execution = await executeDecision(decision, market);
           syms.forEach(s => {
@@ -222,7 +227,7 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
             confidence: 1.0,
           };
 
-          const { decision, blocked } = enforceMandate(rawDecision, mandate, livePortfolio);
+          const { decision, blocked } = enforceMandate(rawDecision, mandate, livePortfolio, market);
           recordDecision(decision, blocked);
           const execution = await executeDecision(decision, market);
 
@@ -236,7 +241,7 @@ export function startWatchdog(mandateKey = process.env.MERCER_MANDATE ?? 'modera
       }
 
       // ── 4. Momentum buy trigger — breakout in an unowned token ───────────────
-      // Scans all 150 ecosystem tokens for strong 1h moves Mercer doesn't hold.
+      // Scans all 400+ ecosystem tokens for strong 1h moves Mercer doesn't hold.
       // Fires an early reasoning cycle so Claude can evaluate the breakout immediately
       // rather than waiting up to 10 minutes for the next scheduled cycle.
       const heldSymbols = new Set(livePortfolio.holdings.map(h => h.symbol));
