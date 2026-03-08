@@ -18,6 +18,8 @@ import { sendAlert } from './notify.js';
 import { resolveToken } from './market/token-registry.js';
 import { signalTrade } from './trade-signal.js';
 import { addToBlockedBuys } from './agent/blocked-buys.js';
+import { pumpFunBuy, pumpFunSell, isOnBondingCurve } from './pumpfun.js';
+import { recordPumpBuy, removePumpPosition } from './pump-monitor.js';
 
 // ─── Debug: confirm env is loaded at module evaluation time ───────────────────
 console.log('[Mercer Executor] WALLET_PRIVATE_KEY:', process.env.WALLET_PRIVATE_KEY
@@ -270,6 +272,60 @@ async function executeTrade(trade, market, jupiterApi) {
 
   const { mint: assetMint, decimals: assetDecimals } = tokenInfo;
 
+  // ── Pump.fun bonding curve buy ─────────────────────────────────────────────
+  // Pre-graduation tokens route through the bonding curve, not Jupiter.
+  // Buys spend SOL directly (not USDC) — proceeds from sells land as SOL.
+  if (type === 'buy' && market[asset]?._pumpfun) {
+    const solPrice = market['SOL']?.price;
+    if (!solPrice) {
+      const msg = `No SOL price available — cannot calculate pump.fun buy amount for ${asset}`;
+      console.error(`[Mercer Executor] ${msg}`);
+      return { ...trade, status: 'blocked', reason: msg };
+    }
+    const minTradeUsd = parseFloat(process.env.MIN_TRADE_USD) || 3;
+    const pumpMaxUsd  = parseFloat(process.env.PUMP_MAX_USD)  || 10; // hard cap on pump.fun plays
+    const spendUsd    = Math.min(amountUsd, pumpMaxUsd);
+    if (spendUsd < minTradeUsd) {
+      return { ...trade, status: 'skipped', reason: `Pump.fun buy $${spendUsd.toFixed(2)} below $${minTradeUsd} minimum` };
+    }
+    if (DRY_RUN) {
+      console.log(`[Mercer Executor] ${ts()} — DRY_RUN — pump.fun BUY ${asset} $${spendUsd} (${(spendUsd / solPrice).toFixed(4)} SOL)`);
+      return { ...trade, status: 'dry_run', route: 'pumpfun' };
+    }
+    try {
+      const keypair    = loadKeypair();
+      const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+      // Pre-flight: ensure enough SOL to cover buy + gas reserve
+      const minSolValueUsd  = parseFloat(process.env.MIN_SOL_VALUE_USD) || 5;
+      const reserveLamports = Math.ceil((minSolValueUsd / solPrice) * 1e9);
+      const solBalance      = await connection.getBalance(keypair.publicKey);
+      const spendLamports   = Math.ceil((spendUsd / solPrice) * 1e9);
+      if (solBalance < spendLamports + reserveLamports) {
+        const availableUsd = ((solBalance - reserveLamports) / 1e9) * solPrice;
+        const msg = `Insufficient SOL for pump.fun buy: $${availableUsd.toFixed(2)} available after $${minSolValueUsd} reserve — need $${spendUsd}`;
+        console.warn(`[Mercer Executor] BLOCKED — ${msg}`);
+        return { ...trade, status: 'blocked', reason: msg };
+      }
+      const result     = await pumpFunBuy(assetMint, spendUsd, solPrice, keypair, connection);
+      console.log(`[Mercer Executor] ${ts()} — Confirmed — PUMP BUY ${asset} $${spendUsd} | tx: https://solscan.io/tx/${result.txid}`);
+      signalTrade();
+      // Register with pump monitor for trailing stop / ladder tracking
+      const entryPrice = market[asset]?.price ?? (spendUsd / (result.tokensOut / 1e6));
+      recordPumpBuy(asset, assetMint, entryPrice, spendUsd);
+      return { ...trade, status: 'executed', txid: result.txid, route: 'pumpfun', tokensOut: result.tokensOut };
+    } catch (err) {
+      console.error(`[Mercer Executor] Pump.fun buy failed for ${asset}:`, err.message);
+      // If graduated, fall through to Jupiter
+      if (err.message.includes('graduated')) {
+        console.log(`[Mercer Executor] ${asset} graduated — routing buy through Jupiter`);
+        // fall through below — Jupiter path will handle it
+      } else {
+        await sendAlert(`Warning: Pump.fun BUY failed — ${asset} $${spendUsd} — ${err.message}`);
+        return { ...trade, status: 'failed', error: err.message, route: 'pumpfun' };
+      }
+    }
+  }
+
   // ── MIN_TRADE_USD floor — skip tiny trades not worth the gas ──────────────
   const minTradeUsd = parseFloat(process.env.MIN_TRADE_USD) || 3;
   if (amountUsd < minTradeUsd) {
@@ -366,7 +422,7 @@ async function executeTrade(trade, market, jupiterApi) {
 
   // ── Get quote ──────────────────────────────────────────────────────────────
   const assetCap    = market[asset]?.marketCapUsd ?? Infinity;
-  const slippageBps = assetCap < 5_000_000 ? 300 : 100;
+  const slippageBps = assetCap < 5_000_000 ? 500 : 100;
   const quoteParams = { inputMint, outputMint, amount: rawAmount, slippageBps };
   const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${rawAmount}&slippageBps=${slippageBps}`;
 
@@ -393,7 +449,32 @@ async function executeTrade(trade, market, jupiterApi) {
     console.error(`[Mercer Executor]   status:   ${err.response?.status ?? 'n/a'}`);
     console.error(`[Mercer Executor]   body:     ${body}`);
     const msg = `Jupiter quote failed for ${type} ${asset}: ${err.message} — ${body}`;
-    if (body.includes('TOKEN_NOT_TRADABLE')) addToBlockedBuys(asset);
+    if (body.includes('TOKEN_NOT_TRADABLE')) {
+      addToBlockedBuys(asset);
+      // For sells: try pump.fun bonding curve before giving up
+      if (type === 'sell' && assetMint && process.env.SOLANA_RPC_URL && !DRY_RUN) {
+        try {
+          const keypair    = loadKeypair();
+          const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+          const onCurve    = await isOnBondingCurve(assetMint, connection);
+          if (onCurve) {
+            console.log(`[Mercer Executor] ${ts()} — ${asset} TOKEN_NOT_TRADABLE on Jupiter, attempting pump.fun sell`);
+            const { value: tokenAccounts } = await connection.getParsedTokenAccountsByOwner(
+              keypair.publicKey, { mint: new PublicKey(assetMint) }
+            );
+            const rawBal = tokenAccounts[0]?.account.data.parsed.info.tokenAmount.amount ?? '0';
+            if (BigInt(rawBal) > 0n) {
+              const result = await pumpFunSell(assetMint, BigInt(rawBal), keypair, connection);
+              console.log(`[Mercer Executor] ${ts()} — Confirmed — PUMP SELL ${asset} | tx: https://solscan.io/tx/${result.txid}`);
+              signalTrade();
+              return { ...trade, status: 'executed', txid: result.txid, route: 'pumpfun' };
+            }
+          }
+        } catch (pfErr) {
+          console.warn(`[Mercer Executor] Pump.fun sell fallback failed: ${pfErr.message}`);
+        }
+      }
+    }
     await sendAlert(`Warning: Trade skipped — ${msg}`);
     return { ...trade, status: 'blocked', reason: msg };
   }
@@ -484,6 +565,7 @@ async function executeTrade(trade, market, jupiterApi) {
 
     console.log(`[Mercer Executor] ${ts()} — Confirmed — ${type.toUpperCase()} ${asset} | tx: https://solscan.io/tx/${txid}`);
     signalTrade();
+    if (type === 'sell') removePumpPosition(asset); // clean up pump monitor if this was a tracked position
     return { ...trade, status: 'executed', txid };
 
   } catch (err) {

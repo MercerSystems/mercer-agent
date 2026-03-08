@@ -89,7 +89,12 @@ export async function resolveToken(symbol, coingeckoId) {
   // 1. Hardcoded core tokens
   if (CORE_TOKENS[sym]) return CORE_TOKENS[sym];
 
-  // 2. In-memory cache (keyed by coingeckoId)
+  // 2a. Direct mint registration (from DexScreener — no coingeckoId needed)
+  const directKey = `_direct_${sym}`;
+  const direct = _cache.get(directKey);
+  if (direct) return { mint: direct.mint, decimals: direct.decimals };
+
+  // 2b. In-memory cache (keyed by coingeckoId)
   if (coingeckoId) {
     const cached = _cache.get(coingeckoId);
     if (cached && (Date.now() - cached.resolvedAt) < CACHE_TTL) {
@@ -131,6 +136,20 @@ export async function resolveToken(symbol, coingeckoId) {
 
   _inflight.set(coingeckoId, promise);
   return promise;
+}
+
+/**
+ * Registers a mint address directly (e.g. from DexScreener) so the executor
+ * can resolve it without needing a CoinGecko ID.
+ */
+export function registerMint(symbol, mint, decimals = 6) {
+  const sym = symbol?.toUpperCase();
+  if (!sym || !mint) return;
+  if (CORE_TOKENS[sym]) return; // never override core tokens
+  const key = `_direct_${sym}`;
+  if (!_cache.has(key)) {
+    _cache.set(key, { mint, decimals, symbol: sym, resolvedAt: Date.now() });
+  }
 }
 
 /**

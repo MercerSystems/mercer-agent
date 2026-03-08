@@ -8,6 +8,7 @@ import { reason, recordDecision, getRecentDecisions } from '../agent/reasoning.j
 import { MANDATE_PRESETS, enforceMandate, scanStopLosses, scanTakeProfits } from '../agent/mandate.js';
 import { loadTrailingData, saveTrailingData, updateHighWaterMarks, scanTrailingStops, scanProfitLadder, clearSymbolState } from '../agent/trailing-stops.js';
 import { fetchSolanaMarketMap } from '../market/solana-market.js';
+import { fetchNewLaunches } from '../market/dexscreener.js';
 import { DEFAULT_BASE_PORTFOLIO, buildLivePortfolio } from '../agent/portfolio.js';
 import { fetchWalletPortfolio } from '../wallet/solana.js';
 import { loadEntryPrices, saveEntryPrices, applyEntryPrices, loadPeakValue, savePeakValue } from '../agent/entry-prices.js';
@@ -81,6 +82,18 @@ router.post('/', async (req, res, next) => {
         if (data.volume24hUsd) {
           data.spikeRatio = getSpikeRatio(symbol, data.volume24hUsd);
         }
+      }
+      // Merge DexScreener new launches — fills in sub-$1M tokens CoinGecko misses
+      try {
+        const newLaunches = await fetchNewLaunches();
+        for (const [symbol, data] of Object.entries(newLaunches)) {
+          if (!market[symbol]) market[symbol] = data; // don't override CoinGecko data
+        }
+        if (Object.keys(newLaunches).length > 0) {
+          console.log(`[Mercer] DexScreener: ${Object.keys(newLaunches).length} new launches merged into market`);
+        }
+      } catch (err) {
+        console.warn(`[Mercer] DexScreener merge failed: ${err.message}`);
       }
     } catch (err) {
       return next(Object.assign(new Error(err.message), { status: 400 }));

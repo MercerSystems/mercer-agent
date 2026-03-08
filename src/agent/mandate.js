@@ -31,7 +31,7 @@ export const MANDATE_PRESETS = {
     riskTier: 'moderate',
     maxPositionPct:      35,
     stopLossPct:         15,   // standard stop for mid/large cap
-    microCapStopLossPct: 10,   // tighter stop for tokens < $5M market cap
+    microCapStopLossPct:  8,   // tighter stop for tokens < $5M market cap (micro-caps dump fast)
     microCapThresholdUsd: 5_000_000,
     trailingStopPct:     10,
     takeProfitPct:       60,
@@ -42,9 +42,9 @@ export const MANDATE_PRESETS = {
     ],
     maxDrawdownPct:   25,
     minCashPct:       20,
-    minMarketCapUsd:  1_000_000,
-    minVolume24hUsd:    250_000,
-    notes: 'Small-cap momentum discovery. Primary focus: micro and small-cap Solana tokens ($1M–$20M) gaining traction. Fast entries, fast exits. Build the portfolio through asymmetric small-cap wins — shift to large caps once portfolio exceeds $2K.',
+    minMarketCapUsd:      5_000,  // Allow DexScreener new launches ($5K+ cap)
+    minVolume24hUsd:     50_000,  // Relaxed for new tokens; DexScreener applies its own 1h vol gate
+    notes: 'Small-cap momentum discovery. Primary focus: micro and small-cap Solana tokens ($5K–$20M) gaining traction. Includes new DexScreener launches under $2M cap. Fast entries, fast exits. Build the portfolio through asymmetric small-cap wins — shift to large caps once portfolio exceeds $2K.',
   },
   aggressive: {
     riskTier: 'aggressive',
@@ -133,13 +133,17 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
     }
 
     // 2b. Volume floor check (buys and swaps) — prevents entering illiquid tokens
+    // DexScreener tokens bypass the 24h floor (they're too new); their quality is pre-vetted by the DexScreener filter.
     if (!tradeBlocked && (trade.type === 'buy' || isSwap) && mandate.minVolume24hUsd && symbol !== 'USDC') {
-      const vol = market[symbol]?.volume24hUsd;
-      if (vol != null && vol < mandate.minVolume24hUsd) {
-        violations.push(
-          `BLOCKED ${trade.type}: ${symbol} 24h volume ${fmtUsd(vol)} below ${fmtUsd(mandate.minVolume24hUsd)} minimum.`
-        );
-        tradeBlocked = true;
+      const tokenData = market[symbol];
+      if (!tokenData?._dexscreener) {
+        const vol = tokenData?.volume24hUsd;
+        if (vol != null && vol < mandate.minVolume24hUsd) {
+          violations.push(
+            `BLOCKED ${trade.type}: ${symbol} 24h volume ${fmtUsd(vol)} below ${fmtUsd(mandate.minVolume24hUsd)} minimum.`
+          );
+          tradeBlocked = true;
+        }
       }
     }
 

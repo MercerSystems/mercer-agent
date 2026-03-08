@@ -17,6 +17,7 @@ import askRouter       from './routes/ask.js';
 import { startWatchdog }      from './agent/watchdog.js';
 import { warmTokenRegistry } from './market/token-registry.js';
 import { getLastTradeAt, consumeEarlyReason } from './trade-signal.js';
+import { startPumpMonitor }  from './pump-monitor.js';
 
 const PORT = process.env.PORT ?? 3000;
 
@@ -53,4 +54,5 @@ app.listen(PORT, () => {
   console.log(`[Mercer] API running on http://localhost:${PORT}`);
   warmTokenRegistry();
   startWatchdog(process.env.MERCER_MANDATE ?? 'moderate');
+  startPumpMonitor();
 });

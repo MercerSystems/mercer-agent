@@ -90,6 +90,16 @@ If you can't answer these cleanly, hold cash instead.
 - Entry signal required: high turnover (>50%) + positive 1h momentum. Don't enter on turnover alone with negative price action.
 - Exit fast. Micro-caps don't consolidate — they either rip or dump. Take profit at +20–30% and move on.
 
+**New launch plays (under $2M market cap — DexScreener):**
+- These are fresh token launches (< 48h old) discovered via DexScreener. They are NOT on CoinGecko.
+- The asymmetric opportunity: a $50K cap token going to $500K is a 10×. These happen multiple times daily on Solana.
+- Entry criteria: age < 48h, buy/sell ratio > 0.5 (more buys than sells), 1h volume > $2K, positive 1h price action.
+- Max size: $10 per new launch. Never more. These can rug instantly.
+- **Graduated tokens** (Raydium/Orca): propose as a normal buy — Jupiter executes it using USDC.
+- **Pre-graduation tokens** (pump.fun bonding curve): propose as a normal buy — the executor routes directly to the bonding curve using SOL from your wallet. You do NOT need to account for SOL separately. Just propose the buy like any other.
+- Take profit fast: +30–50% and exit. Do not hold new launches through multiple reasoning cycles.
+- If a new launch appears in your context, evaluate it seriously — this is where the real returns come from for a small portfolio.
+
 **SOL is gas, not a trade:**
 - Never propose buying or selling SOL. It exists solely to pay transaction fees.
 - If the portfolio shows a SOL holding, ignore it for rebalancing purposes.
@@ -357,6 +367,22 @@ export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_
     .slice(0, 10)
     .map(t => t.line);
 
+  // ── New launches from DexScreener (sub-$1M, < 48h old) ───────────────────
+  const newLaunches = Object.entries(market)
+    .filter(([, d]) => d._dexscreener && d.ageHours != null && !heldSymbols.has(d.symbol ?? ''))
+    .sort((a, b) => (b[1].volume1hUsd ?? 0) - (a[1].volume1hUsd ?? 0))
+    .slice(0, 10)
+    .map(([symbol, d]) => {
+      const age    = d.ageHours < 1 ? `${Math.round(d.ageHours * 60)}m` : `${d.ageHours.toFixed(0)}h`;
+      const ch1h   = d.change1h  != null ? ` 1h: ${d.change1h  >= 0 ? '+' : ''}${d.change1h.toFixed(1)}%` : '';
+      const ch24h  = d.change24h != null ? ` 24h: ${d.change24h >= 0 ? '+' : ''}${d.change24h.toFixed(1)}%` : '';
+      const mcap   = d.marketCapUsd ? ` mcap: $${(d.marketCapUsd / 1_000).toFixed(0)}K` : '';
+      const vol1h  = d.volume1hUsd  ? ` vol1h: $${(d.volume1hUsd / 1_000).toFixed(1)}K` : '';
+      const bs     = d.buySellRatio != null ? ` bs: ${(d.buySellRatio * 100).toFixed(0)}% buys` : '';
+      const dex    = d.dex ? ` [${d.dex}]` : '';
+      return `  ${symbol.padEnd(10)} age: ${age.padEnd(4)}${mcap}${vol1h}${ch1h}${ch24h}${bs}${dex}`;
+    });
+
   // Sustained momentum: strong on BOTH 1h and 24h (narrative in motion, not just a candle spike)
   const sustainedMovers = allTokens
     .filter(t => t.change1h > 3 && t.change24h > 5 && !heldSymbols.has(t.symbol))
@@ -486,6 +512,17 @@ High turnover = heavy trading relative to size on a token still gaining price �
 All entries here are price-positive (1h or 24h up) so you are NOT looking at dumps.
 Small position sizing for micro-caps ($1M–$5M cap). These move fast — take profit at +20–30% and redeploy.
 ${newLaunchSignals.join('\n') || '  None meeting threshold'}
+
+## DexScreener New Launches — sub-$2M cap, < 48h old
+Two sub-categories below. Both use bonding curve or DEX pricing from DexScreener.
+Max size: $5–$10 per play regardless of category. Exit at +30–50%. Stop-loss fires at -8%.
+
+### Graduated (Raydium/Orca/Meteora) — tradeable via Jupiter as normal
+${newLaunches.filter(l => !l.includes('[pump-fun]')).join('\n') || '  None right now'}
+
+### Pre-graduation (pump.fun bonding curve) — executor routes these directly, no Jupiter needed
+These can graduate at any time once the bonding curve fills (~$69K SOL). Entry here = earliest possible stage.
+${newLaunches.filter(l => l.includes('[pump-fun]')).join('\n') || '  None right now'}
 
 ## Momentum Laggards — bottom 8 by 1h
 ${bottomMovers.join('\n') || '  No data'}

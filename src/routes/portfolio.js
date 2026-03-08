@@ -59,7 +59,7 @@ export async function getPortfolio() {
   for (const h of holdings) { delete h._mint; delete h._unknown; }
 
   // Filter out any holding that still has no price and no recognised symbol
-  const pricedHoldings = holdings.filter(h => h.token && (h.value > 0 || h.token === 'USDC'));
+  const pricedHoldings = holdings.filter(h => h.token && (h.value >= 0.01 || h.token === 'USDC'));
 
   const holdingsValue = pricedHoldings.reduce((sum, h) => sum + h.value, 0);
   const totalValue    = holdingsValue + (basePortfolio.cashUsd ?? 0);
