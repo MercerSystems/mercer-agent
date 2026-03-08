@@ -106,23 +106,29 @@ router.post('/', async (req, res, next) => {
       basePortfolio = { ...basePortfolio, holdings: enrichedHoldings };
       saveEntryPrices(updated);
 
-      // Restore persisted peak value so drawdown protection survives restarts.
-      // Sanity cap: if the stored peak is >10× the live portfolio value it is almost certainly
-      // a stale value from a mock-portfolio run or a previous wallet — reset it to current value
-      // to avoid locking Claude into "99% drawdown — hold USDC forever" mode.
+      // Load persisted peak — applied after buildLivePortfolio so we have priced holdings
       const storedPeak = loadPeakValue();
-      const currentTotal = basePortfolio.holdings?.reduce((s, h) => s + (h.valueUsd ?? 0), 0) ?? 0;
-      const peakIsStale  = storedPeak > 0 && currentTotal > 0 && storedPeak > currentTotal * 10;
-      if (peakIsStale) {
-        console.warn(`[Mercer] Stale peak detected ($${storedPeak.toFixed(2)} vs current $${currentTotal.toFixed(2)}) — resetting to current value.`);
-        savePeakValue(currentTotal);
-      } else if (storedPeak > 0) {
+      if (storedPeak > 0) {
         basePortfolio = { ...basePortfolio, peakValueUsd: storedPeak };
       }
     }
 
-    // Build enriched portfolio
+    // Build enriched portfolio (holdings get USD values from market prices here)
     const livePortfolio = buildLivePortfolio(basePortfolio, market);
+
+    // Stale peak check — must run AFTER buildLivePortfolio so totalValueUsd is priced correctly.
+    // If stored peak is >2× the live portfolio value it is almost certainly a stale value from a
+    // mock-portfolio run or a previous wallet — reset to current to prevent permanent halt.
+    if (!portfolioInput) {
+      const storedPeak   = livePortfolio.peakValueUsd;
+      const currentTotal = livePortfolio.totalValueUsd;
+      const peakIsStale  = storedPeak > 0 && currentTotal > 0 && storedPeak > currentTotal * 2;
+      if (peakIsStale) {
+        console.warn(`[Mercer] Stale peak detected ($${storedPeak.toFixed(2)} vs live $${currentTotal.toFixed(2)}) — resetting to current value.`);
+        savePeakValue(currentTotal);
+        livePortfolio.peakValueUsd = currentTotal;
+      }
+    }
 
     // Keep peak value up to date on disk
     if (!portfolioInput && livePortfolio.totalValueUsd > livePortfolio.peakValueUsd) {
