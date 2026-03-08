@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BASE_URL    = 'https://api.coingecko.com/api/v3/coins/markets';
-const CACHE_TTL_MS = 90_000; // 90s — longer than watchdog interval (30s) to avoid redundant fetches
+const CACHE_TTL_MS = 30_000; // 30s — fast enough for live trading, safe with a CoinGecko API key
 
 // CoinGecko coin ID for each supported Solana token symbol.
 // Add tokens here to make them available for Claude to trade.
