@@ -318,14 +318,9 @@ async function executeTrade(trade, market, jupiterApi) {
       return { ...trade, status: 'executed', txid: result.txid, route: 'pumpfun', tokensOut: result.tokensOut };
     } catch (err) {
       console.error(`[Mercer Executor] Pump.fun buy failed for ${asset}:`, err.message);
-      // If graduated, fall through to Jupiter
-      if (err.message.includes('graduated')) {
-        console.log(`[Mercer Executor] ${asset} graduated — routing buy through Jupiter`);
-        // fall through below — Jupiter path will handle it
-      } else {
-        await sendAlert(`Warning: Pump.fun BUY failed — ${asset} $${spendUsd} — ${err.message}`);
-        return { ...trade, status: 'failed', error: err.message, route: 'pumpfun' };
-      }
+      // Always fall through to Jupiter — bonding curve may have graduated, changed, or be unavailable
+      console.log(`[Mercer Executor] ${asset} — falling back to Jupiter`);
+      // fall through below — Jupiter path will handle it
     }
   }
 

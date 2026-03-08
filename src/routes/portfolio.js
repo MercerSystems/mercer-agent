@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import { fetchWalletPortfolio } from '../wallet/solana.js';
 import { fetchSolanaMarketMap, fetchPricesByMint } from '../market/solana-market.js';
+import { fetchNewLaunches } from '../market/dexscreener.js';
 import { DEFAULT_BASE_PORTFOLIO } from '../agent/portfolio.js';
 import { recordSnapshot, getHistory } from '../history.js';
 
@@ -28,7 +29,14 @@ export async function getPortfolio() {
     basePortfolio = DEFAULT_BASE_PORTFOLIO;
   }
 
-  const market = await fetchSolanaMarketMap(150);
+  const [market, dexLaunches] = await Promise.all([
+    fetchSolanaMarketMap(150),
+    fetchNewLaunches().catch(() => ({})),
+  ]);
+  // Merge DexScreener launches — prices brand-new pump.fun tokens CoinGecko doesn't list yet
+  for (const [sym, entry] of Object.entries(dexLaunches)) {
+    if (!market[sym]) market[sym] = entry;
+  }
 
   const holdings = basePortfolio.holdings.map(h => {
     const sym       = h.symbol;

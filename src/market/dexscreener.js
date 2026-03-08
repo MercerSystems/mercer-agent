@@ -85,7 +85,7 @@ function normalize(pair, profile = null) {
     socialScore,   // 0–3: number of social channels present
     description,   // short project description from DexScreener profile
     _dexscreener:  true,
-    _pumpfun:      PUMPFUN_DEXES.has(pair.dexId),
+    _pumpfun:      pair.dexId === 'pumpfun', // only bonding-curve tokens; pumpswap = graduated → Jupiter directly
   };
 }
 
