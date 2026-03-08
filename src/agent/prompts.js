@@ -100,13 +100,18 @@ If you can't answer these cleanly, hold cash instead.
 - Take profit fast: +30–50% and exit. Do not hold new launches through multiple reasoning cycles.
 - If a new launch appears in your context, evaluate it seriously — this is where the real returns come from for a small portfolio.
 
-**Social narrative evaluation (DexScreener launches):**
-Each launch in your context includes social presence (Twitter/Telegram/website) and a short description. Use these to assess narrative quality:
-- **3 socials (TW+TG+WEB)**: Team is actively marketing. Higher legitimacy signal. Weight this positively.
-- **2 socials**: Decent presence. Evaluate the description for narrative fit.
-- **1 social or none**: Anonymous launch. Higher rug risk. Only enter if momentum is exceptional and size down further (max $5).
-- **Description match**: If the description fits an active narrative (AI agent, meme character, DeSci, DePIN), and that narrative is currently running in the market, it's a stronger entry. A "random dog coin" with no narrative during a non-meme cycle is weak. The same dog coin launched during a meme cycle with volume confirming is a valid play.
-- **Narrative + social + momentum** = highest quality new launch signal. All three present = consider full $10 size. Missing two = pass or $5 max.
+**Social narrative evaluation (graduated DexScreener tokens only):**
+Social presence and descriptions only populate on DexScreener AFTER a token graduates to a DEX (Raydium/Orca/Meteora). Pre-graduation pump.fun tokens will ALWAYS show [no-social] — this is expected, not a rug signal. Apply social evaluation ONLY to graduated tokens:
+- **3 socials (TW+TG+WEB)**: Team is actively marketing. Higher legitimacy. Weight positively.
+- **2 socials**: Decent presence. Check description for narrative fit.
+- **1 social or [no-social] on a GRADUATED token**: Red flag — team abandoned socials or never set them up. Size down to $5 max or pass.
+- **Description match**: If the description fits an active narrative (AI agent, meme character, DeSci, DePIN) that is currently running in the market, it's a stronger entry. Match the story to what's being bid right now.
+- **Graduated token: narrative + social + momentum** = highest quality signal → full $10 size. Missing two → $5 max or pass.
+
+**Pre-graduation pump.fun tokens — social not applicable:**
+- Social links are not available before graduation. Ignore [no-social] for pump.fun tokens entirely.
+- Evaluate pump.fun tokens purely on: buy/sell ratio, 1h momentum, age, and 1h volume.
+- A pump.fun token with 70%+ buys, positive 1h price action, and > $2K 1h volume is a valid entry regardless of social data.
 
 **SOL is gas, not a trade:**
 - Never propose buying or selling SOL. It exists solely to pay transaction fees.
@@ -393,12 +398,15 @@ export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_
       const bs     = d.buySellRatio != null ? ` bs: ${(d.buySellRatio * 100).toFixed(0)}% buys` : '';
       const dex    = d.dex ? ` [${d.dex}]` : '';
       // Social presence: TW=Twitter, TG=Telegram, WEB=website
+      // Pre-graduation pump.fun tokens never have socials — suppress the label to avoid misleading Claude
       const socials = [
         d.hasTwitter  ? 'TW'  : null,
         d.hasTelegram ? 'TG'  : null,
         d.hasWebsite  ? 'WEB' : null,
       ].filter(Boolean);
-      const socialStr = socials.length > 0 ? ` [${socials.join('+')}]` : ' [no-social]';
+      const socialStr = d._pumpfun
+        ? ''  // no-social is expected on bonding curve — don't show label
+        : socials.length > 0 ? ` [${socials.join('+')}]` : ' [no-social]';
       const desc = d.description ? `\n    "${d.description}"` : '';
       return `  ${symbol.padEnd(10)} age: ${age.padEnd(4)}${mcap}${vol1h}${ch1h}${ch24h}${bs}${dex}${socialStr}${desc}`;
     });
