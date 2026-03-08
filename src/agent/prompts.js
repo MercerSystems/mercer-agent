@@ -90,15 +90,23 @@ If you can't answer these cleanly, hold cash instead.
 - Entry signal required: high turnover (>50%) + positive 1h momentum. Don't enter on turnover alone with negative price action.
 - Exit fast. Micro-caps don't consolidate — they either rip or dump. Take profit at +20–30% and move on.
 
-**New launch plays (under $2M market cap — DexScreener):**
+**New launch plays ($5K–$2M market cap — DexScreener):**
 - These are fresh token launches (< 48h old) discovered via DexScreener. They are NOT on CoinGecko.
-- The asymmetric opportunity: a $50K cap token going to $500K is a 10×. These happen multiple times daily on Solana.
+- Range: $5K to $2M market cap. A $10K cap token going to $500K is a 50×. These happen multiple times daily on Solana.
 - Entry criteria: age < 48h, buy/sell ratio > 0.5 (more buys than sells), 1h volume > $2K, positive 1h price action.
 - Max size: $10 per new launch. Never more. These can rug instantly.
 - **Graduated tokens** (Raydium/Orca): propose as a normal buy — Jupiter executes it using USDC.
 - **Pre-graduation tokens** (pump.fun bonding curve): propose as a normal buy — the executor routes directly to the bonding curve using SOL from your wallet. You do NOT need to account for SOL separately. Just propose the buy like any other.
 - Take profit fast: +30–50% and exit. Do not hold new launches through multiple reasoning cycles.
 - If a new launch appears in your context, evaluate it seriously — this is where the real returns come from for a small portfolio.
+
+**Social narrative evaluation (DexScreener launches):**
+Each launch in your context includes social presence (Twitter/Telegram/website) and a short description. Use these to assess narrative quality:
+- **3 socials (TW+TG+WEB)**: Team is actively marketing. Higher legitimacy signal. Weight this positively.
+- **2 socials**: Decent presence. Evaluate the description for narrative fit.
+- **1 social or none**: Anonymous launch. Higher rug risk. Only enter if momentum is exceptional and size down further (max $5).
+- **Description match**: If the description fits an active narrative (AI agent, meme character, DeSci, DePIN), and that narrative is currently running in the market, it's a stronger entry. A "random dog coin" with no narrative during a non-meme cycle is weak. The same dog coin launched during a meme cycle with volume confirming is a valid play.
+- **Narrative + social + momentum** = highest quality new launch signal. All three present = consider full $10 size. Missing two = pass or $5 max.
 
 **SOL is gas, not a trade:**
 - Never propose buying or selling SOL. It exists solely to pay transaction fees.
@@ -367,20 +375,32 @@ export function buildContext({ portfolio, market, mandate, trigger = 'scheduled_
     .slice(0, 10)
     .map(t => t.line);
 
-  // ── New launches from DexScreener (sub-$1M, < 48h old) ───────────────────
+  // ── New launches from DexScreener ($5K–$2M cap, < 48h old) ─────────────────
   const newLaunches = Object.entries(market)
     .filter(([, d]) => d._dexscreener && d.ageHours != null && !heldSymbols.has(d.symbol ?? ''))
     .sort((a, b) => (b[1].volume1hUsd ?? 0) - (a[1].volume1hUsd ?? 0))
-    .slice(0, 10)
+    .slice(0, 12)
     .map(([symbol, d]) => {
       const age    = d.ageHours < 1 ? `${Math.round(d.ageHours * 60)}m` : `${d.ageHours.toFixed(0)}h`;
       const ch1h   = d.change1h  != null ? ` 1h: ${d.change1h  >= 0 ? '+' : ''}${d.change1h.toFixed(1)}%` : '';
       const ch24h  = d.change24h != null ? ` 24h: ${d.change24h >= 0 ? '+' : ''}${d.change24h.toFixed(1)}%` : '';
-      const mcap   = d.marketCapUsd ? ` mcap: $${(d.marketCapUsd / 1_000).toFixed(0)}K` : '';
+      const mcap   = d.marketCapUsd
+        ? d.marketCapUsd >= 1_000_000
+          ? ` mcap: $${(d.marketCapUsd / 1_000_000).toFixed(2)}M`
+          : ` mcap: $${(d.marketCapUsd / 1_000).toFixed(0)}K`
+        : '';
       const vol1h  = d.volume1hUsd  ? ` vol1h: $${(d.volume1hUsd / 1_000).toFixed(1)}K` : '';
       const bs     = d.buySellRatio != null ? ` bs: ${(d.buySellRatio * 100).toFixed(0)}% buys` : '';
       const dex    = d.dex ? ` [${d.dex}]` : '';
-      return `  ${symbol.padEnd(10)} age: ${age.padEnd(4)}${mcap}${vol1h}${ch1h}${ch24h}${bs}${dex}`;
+      // Social presence: TW=Twitter, TG=Telegram, WEB=website
+      const socials = [
+        d.hasTwitter  ? 'TW'  : null,
+        d.hasTelegram ? 'TG'  : null,
+        d.hasWebsite  ? 'WEB' : null,
+      ].filter(Boolean);
+      const socialStr = socials.length > 0 ? ` [${socials.join('+')}]` : ' [no-social]';
+      const desc = d.description ? `\n    "${d.description}"` : '';
+      return `  ${symbol.padEnd(10)} age: ${age.padEnd(4)}${mcap}${vol1h}${ch1h}${ch24h}${bs}${dex}${socialStr}${desc}`;
     });
 
   // Sustained momentum: strong on BOTH 1h and 24h (narrative in motion, not just a candle spike)
@@ -513,15 +533,15 @@ All entries here are price-positive (1h or 24h up) so you are NOT looking at dum
 Small position sizing for micro-caps ($1M–$5M cap). These move fast — take profit at +20–30% and redeploy.
 ${newLaunchSignals.join('\n') || '  None meeting threshold'}
 
-## DexScreener New Launches — sub-$2M cap, < 48h old
-Two sub-categories below. Both use bonding curve or DEX pricing from DexScreener.
-Max size: $5–$10 per play regardless of category. Exit at +30–50%. Stop-loss fires at -8%.
+## DexScreener New Launches — $5K–$2M cap, < 48h old
+Two sub-categories. Social presence shown: [TW=Twitter, TG=Telegram, WEB=website, no-social=anonymous].
+Evaluate: narrative fit + social legitimacy + momentum. Max size $5–$10. Exit at +30–50%. Stop at -8%.
 
-### Graduated (Raydium/Orca/Meteora) — tradeable via Jupiter as normal
+### Graduated (Raydium/Orca/Meteora) — buy via Jupiter using USDC
 ${newLaunches.filter(l => !l.includes('[pump-fun]')).join('\n') || '  None right now'}
 
-### Pre-graduation (pump.fun bonding curve) — executor routes these directly, no Jupiter needed
-These can graduate at any time once the bonding curve fills (~$69K SOL). Entry here = earliest possible stage.
+### Pre-graduation (pump.fun bonding curve) — executor routes directly, uses SOL, no Jupiter needed
+Bonding curve fills at ~$69K SOL raised — graduation imminent as that threshold approaches.
 ${newLaunches.filter(l => l.includes('[pump-fun]')).join('\n') || '  None right now'}
 
 ## Momentum Laggards — bottom 8 by 1h

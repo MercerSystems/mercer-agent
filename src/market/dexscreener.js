@@ -47,13 +47,23 @@ function bestPair(pairs) {
     .sort((a, b) => (b.volume?.h24 ?? 0) - (a.volume?.h24 ?? 0))[0] ?? null;
 }
 
-function normalize(pair) {
+function normalize(pair, profile = null) {
   const ageMs    = Date.now() - (pair.pairCreatedAt ?? 0);
   const ageHours = ageMs / 3_600_000;
   const sym      = pair.baseToken.symbol?.toUpperCase();
   const txns5m   = pair.txns?.m5;
   const total5m  = (txns5m?.buys ?? 0) + (txns5m?.sells ?? 0);
   const bsRatio  = total5m > 0 ? (txns5m.buys / total5m) : 0.5;
+
+  // Social presence from token profile
+  const links       = profile?.links ?? [];
+  const hasTwitter  = links.some(l => l.type === 'twitter'  || l.url?.includes('twitter') || l.url?.includes('x.com'));
+  const hasTelegram = links.some(l => l.type === 'telegram' || l.url?.includes('t.me'));
+  const hasWebsite  = links.some(l => l.type === 'website'  || (!l.url?.includes('twitter') && !l.url?.includes('t.me') && l.url?.startsWith('http')));
+  const socialScore = (hasTwitter ? 1 : 0) + (hasTelegram ? 1 : 0) + (hasWebsite ? 1 : 0);
+  const description = profile?.description
+    ? profile.description.replace(/\s+/g, ' ').trim().slice(0, 120)
+    : null;
 
   return {
     price:         parseFloat(pair.priceUsd ?? 0),
@@ -69,6 +79,11 @@ function normalize(pair) {
     dex:           pair.dexId,
     pairAddress:   pair.pairAddress,
     buySellRatio:  parseFloat(bsRatio.toFixed(2)),
+    hasTwitter,
+    hasTelegram,
+    hasWebsite,
+    socialScore,   // 0–3: number of social channels present
+    description,   // short project description from DexScreener profile
     _dexscreener:  true,
     _pumpfun:      pair.dexId === 'pump-fun',
   };
@@ -98,11 +113,18 @@ export async function fetchNewLaunches() {
   if (_cache && (Date.now() - _cacheTime) < CACHE_TTL_MS) return _cache;
 
   try {
-    // 1. Get latest token profiles
+    // 1. Get latest token profiles — includes description, social links (Twitter/TG/website)
     const profiles = await fetchJson(PROFILES_URL);
+    const profileData = new Map(); // mint → { description, links }
     const solanaMints = profiles
       .filter(p => p.chainId === 'solana')
-      .map(p => p.tokenAddress)
+      .map(p => {
+        profileData.set(p.tokenAddress, {
+          description: p.description ?? null,
+          links:       p.links       ?? [],
+        });
+        return p.tokenAddress;
+      })
       .slice(0, 60); // take latest 60
 
     if (solanaMints.length === 0) { _cache = {}; _cacheTime = Date.now(); return {}; }
@@ -137,7 +159,8 @@ export async function fetchNewLaunches() {
     const seenSymbols = new Set(['SOL', 'USDC']); // never override core tokens
 
     for (const pair of byMint.values()) {
-      const entry = normalize(pair);
+      const profile = profileData.get(pair.baseToken?.address) ?? null;
+      const entry = normalize(pair, profile);
       if (!entry.symbol || seenSymbols.has(entry.symbol)) continue;
       if (!meetsQuality(entry)) continue;
 
