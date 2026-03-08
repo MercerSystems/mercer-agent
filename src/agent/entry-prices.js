@@ -66,6 +66,7 @@ export function applyEntryPrices(holdings, market, persisted) {
   const updated = { ...persisted };
 
   const result = holdings.map(h => {
+    if (!h.symbol) return { ...h, entryPrice: 0 }; // skip unresolved tokens
     const existing = h.entryPrice > 0 ? h.entryPrice : null;
     const stored   = persisted[h.symbol] > 0 ? persisted[h.symbol] : null; // ignore saved 0s
     const fallback = market[h.symbol]?.price > 0 ? market[h.symbol].price : null;
