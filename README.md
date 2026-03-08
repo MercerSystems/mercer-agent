@@ -40,9 +40,23 @@ CoinGecko — 400+ Solana ecosystem tokens across 3 fetches:
   • Tokens 251–500 by market cap (page 2)
   • Top 75 by 24h volume (new launch discovery)
            ↓
+DexScreener — micro-cap + pump.fun token discovery:
+  • Scans /token-profiles/latest/v1 for new launches
+  • Quality filters: market cap $5K–$2M, 1h volume ≥ $2K, age ≤ 48h
+  • Tags tokens as _pumpfun: true (bonding curve) or graduated (Jupiter)
+           ↓
 Volume baseline tracker — rolling spike ratio per token (~96min window)
            ↓
 Portfolio state builder (USD values, PnL vs entry, drawdown)
+           ↓
+┌─────────────────────────────────────────────────────────┐
+│              60s Pump Monitor (always on)               │
+│  Dedicated watch for active pump.fun positions:         │
+│  • Time exit (6h max hold)                              │
+│  • Entry stop-loss (-8% from entry)                     │
+│  • Trailing stop (-20% from peak, arms after +20% gain) │
+│  • Profit ladder: +50% sell half | +100% sell rest      │
+└─────────────────────────────────────────────────────────┘
            ↓
 ┌─────────────────────────────────────────────┐
 │           30s Watchdog (always on)          │
@@ -55,18 +69,18 @@ Portfolio state builder (USD values, PnL vs entry, drawdown)
 Claude reasoning loop (every 15 min, adaptive)
   → Market regime classification (BULL RUN / CORRECTION / BEAR / etc.)
   → Momentum leaders, sustained movers, new launch signals
+  → Pre-graduation pump.fun launches (bonding curve opportunities)
   → Stale/declining position rotation candidates
   → Returns structured decision: hold/buy/sell/swap
            ↓
 Mandate enforcement layer
   → Position size, market cap, volume, drawdown checks
   → Stop-loss cooldown, permanent buy block list
-  → Pre-flight balance checks
+  → Pre-flight balance checks (SOL gas reserve enforced)
            ↓
-Jupiter aggregator (best-price swap execution)
-  → Buy: USDC → token
-  → Sell: token → USDC
-  → Swap: token → token (direct rotation, no USDC round-trip)
+Trade routing
+  → pump.fun bonding curve program (pre-graduation tokens, SOL in/out)
+  → Jupiter aggregator (graduated tokens, USDC-settled swaps)
            ↓
 Dashboard update + macOS notifications
 ```
@@ -86,6 +100,42 @@ Mercer's primary focus scales with portfolio size:
 | Over $10K | Shift toward large-cap Solana ecosystem leaders |
 
 Claude scores every opportunity using **conviction stars** (★★★/★★/★) based on 1h/24h momentum and volume spike ratio, then sizes positions accordingly. No loyalty to existing holdings — stale or declining positions are rotation candidates.
+
+### pump.fun Bonding Curve Trading
+
+Mercer trades tokens that haven't graduated yet — directly on the pump.fun bonding curve program, not through Jupiter.
+
+**How it works:**
+- Tokens tagged `_pumpfun: true` by DexScreener are routed to the bonding curve executor
+- Uses the constant-product AMM formula with 1% protocol fee: `tokensOut = (virtualTokenReserves × netSOL) / (virtualSOLReserves + netSOL)`
+- PDAs derived at runtime: `["bonding-curve", mint]` for curve state, `["global"]` for fee recipient
+- 15% slippage tolerance (bonding curve prices move fast)
+- SOL gas reserve enforced before every buy — Mercer never buys if it can't cover transaction fees
+- If a token graduates (bonding curve `complete = true`) mid-hold, sell automatically falls back to Jupiter
+
+**Pump monitor (60s independent loop):**
+
+| Rule | Trigger | Action |
+|---|---|---|
+| Time exit | Held ≥ 6 hours | Sell 100% |
+| Entry stop | Price ≤ entry × 0.92 (-8%) | Sell 100% |
+| Trailing stop | Peak ≥ +20% AND drops 20% from peak | Sell 100% |
+| Profit ladder +50% | Price ≥ entry × 1.50 | Sell 50% |
+| Profit ladder +100% | Price ≥ entry × 2.00 | Sell remaining |
+
+Rung state is only saved **after a confirmed on-chain sell** — failed or dry-run transactions never consume profit ladder rungs.
+
+Position state is persisted to `data/pump-positions.json` and survives restarts.
+
+### DexScreener Token Discovery
+
+Runs alongside CoinGecko to surface opportunities that haven't reached CoinGecko's index yet:
+
+- Calls `/token-profiles/latest/v1` for freshly created tokens
+- Enriches with `/latest/dex/tokens/{mints}` for price, volume, and liquidity data
+- Quality filters: market cap $5K–$2M, 1h volume ≥ $2K, buy/sell ratio ≥ 0.5, age ≤ 48h, max 1h price drop -40%
+- Detects dex: `pump-fun` → routes to bonding curve; Raydium/Orca/Meteora → routes to Jupiter
+- 60s cache, registers each token's mint address for execution routing
 
 ### New Launch Discovery
 
@@ -144,8 +194,10 @@ Every decision is validated against an active mandate before execution:
 | Preset | Max Position | Stop-Loss | Micro-Cap Stop | Trailing Stop | Max Drawdown | Min Market Cap |
 |---|---|---|---|---|---|---|
 | `conservative` | 20% | 10% | — | 8% | 15% | $500M |
-| `moderate` | 35% | 15% | 10% (<$5M cap) | 10% | 25% | $1M |
-| `aggressive` | 50% | 35% | — | 25% | 40% | $5M |
+| `moderate` | 35% | 10% | 8% (<$5M cap) | 10% | 25% | $5K |
+| `aggressive` | 50% | 35% | — | 25% | 40% | $1K |
+
+The `moderate` mandate's $5K minimum market cap floor enables pump.fun bonding curve tokens. DexScreener-sourced tokens bypass the standard 24h volume check (they're too new to have it), but must still pass the quality filters baked into the DexScreener discovery layer.
 
 The `minMarketCapUsd` filter automatically blocks illiquid tokens — no allowlist to maintain.
 
@@ -211,6 +263,7 @@ DISCORD_WEBHOOK_URL=...    # trade alerts, stop-loss notifications
 MERCER_MANDATE=moderate    # conservative | moderate | aggressive
 MIN_SOL_FOR_GAS=0.01       # minimum SOL balance before blocking trades
 MAX_PRICE_IMPACT_PCT=2.0   # max acceptable Jupiter price impact %
+PUMP_MAX_USD=10            # max USD per pump.fun bonding curve buy
 ```
 
 > **DRY_RUN=true** (default) fetches quotes and logs decisions without broadcasting transactions. Set `DRY_RUN=false` only when ready for live execution.
@@ -269,7 +322,9 @@ npm run ask
 src/
 ├── server.js                 Express API entry point (port 3000)
 ├── dashboard.js              blessed-contrib terminal dashboard
-├── executor.js               Jupiter swap execution (buy/sell/swap)
+├── executor.js               Trade routing: Jupiter or pump.fun bonding curve
+├── pumpfun.js                pump.fun bonding curve buy/sell executor
+├── pump-monitor.js           60s pump position monitor (stops, ladder, time exit)
 ├── notify.js                 macOS + Discord notifications
 ├── trade-signal.js           In-process trade signal (instant dashboard refresh)
 ├── history.js                Portfolio snapshot store
@@ -277,7 +332,7 @@ src/
 ├── agent/
 │   ├── watchdog.js           30s protection monitor (stop-loss, trailing, ladder)
 │   ├── mandate.js            Risk mandate presets + enforcement engine
-│   ├── prompts.js            Claude system prompt + context builder
+│   ├── prompts.js            Claude system prompt + context builder (incl. new launches)
 │   ├── reasoning.js          Anthropic SDK integration + decision parsing
 │   ├── portfolio.js          Portfolio state builder (USD values, PnL)
 │   ├── entry-prices.js       Persisted entry prices + peak value
@@ -287,8 +342,9 @@ src/
 │
 ├── market/
 │   ├── solana-market.js      400+ Solana tokens — 3-fetch strategy (cap p1/p2 + volume)
+│   ├── dexscreener.js        Micro-cap + pump.fun token discovery via DexScreener
 │   ├── volume-tracker.js     Rolling volume baseline + spike ratio per token
-│   ├── token-registry.js     Solana mint address resolver (CoinGecko + cache)
+│   ├── token-registry.js     Solana mint address resolver (CoinGecko + DexScreener cache)
 │   └── prices.js             Legacy price fetcher (standalone CLI only)
 │
 ├── routes/
@@ -306,6 +362,7 @@ src/
 data/
 ├── decisions.json            Persisted decision history (last 200)
 ├── entry-prices.json         Token entry prices for PnL tracking
+├── pump-positions.json       Active pump.fun positions (monitor state)
 ├── blocked-buys.json         Permanently blocked tokens (never buy)
 └── volume-baseline.json      Rolling volume baseline per token
 ```
@@ -350,6 +407,7 @@ All endpoints served on `http://localhost:3000`.
 | `WATCHDOG_INTERVAL_MS` | No | `30000` | Watchdog check interval (ms) |
 | `ALERT_1H_DROP_PCT` | No | `5.0` | 1h momentum alert threshold % |
 | `DATA_REFRESH_MS` | No | `60000` | Dashboard data refresh interval (ms) |
+| `PUMP_MAX_USD` | No | `10` | Max USD per pump.fun bonding curve buy |
 
 ---
 
