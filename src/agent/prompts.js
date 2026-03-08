@@ -114,8 +114,9 @@ Social presence and descriptions only populate on DexScreener AFTER a token grad
 - A pump.fun token with 70%+ buys, positive 1h price action, and > $2K 1h volume is a valid entry regardless of social data.
 
 **SOL is gas, not a trade:**
-- Never propose buying or selling SOL. It exists solely to pay transaction fees.
+- Never propose buying or selling SOL as an asset. It exists to pay transaction fees.
 - If the portfolio shows a SOL holding, ignore it for rebalancing purposes.
+- Exception: pump.fun bonding curve buys automatically spend SOL from the wallet — the executor handles this. You still just propose `buy TOKENX $10` as normal. The SOL cash floor and gas reserve are managed by the executor, not you.
 
 **When to hold USDC:**
 - Broad market weakness — multiple tokens down across the board, no sector leading, AND no ★★ or ★★★ signals in the universe
@@ -578,7 +579,7 @@ ${recentSellWarnings.length > 0 ? `\n## Recently Sold — Re-Entry Block (last 2
 ## Active Mandate
 Risk Tier:       ${mandate.riskTier}
 Max Position:    ${mandate.maxPositionPct}%
-Min Cash (USDC): ${mandate.minCashPct ?? 0}% of portfolio must stay as dry powder (enforced — buys trimmed/blocked to preserve this)
+Min Cash (USDC): ${mandate.minCashPct ?? 0}% of portfolio must stay as dry powder (enforced for USDC buys — pump.fun buys use SOL and are exempt)
 Stop-Loss:       ${mandate.stopLossPct}% from entry — ${mandate.microCapStopLossPct ? `${mandate.microCapStopLossPct}% for tokens under $${(mandate.microCapThresholdUsd / 1e6).toFixed(0)}M market cap` : 'uniform'} (watchdog auto-executes)
 Trailing Stop:   ${mandate.trailingStopPct ?? 'not set'}% from peak price (watchdog auto-executes)
 Profit Ladder:   ${mandate.takeProfitLadder?.map((r, i) => `rung ${i + 1}: sell ${(r.sellFraction * 100).toFixed(0)}% at +${r.pct}%`).join(', ') ?? 'not set'} (watchdog auto-executes)

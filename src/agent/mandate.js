@@ -167,8 +167,8 @@ export function enforceMandate(decision, mandate, portfolio, market = {}) {
       }
     }
 
-    // 2d. Cash floor check — only applies to buys (swaps don't spend USDC)
-    if (!tradeBlocked && trade.type === 'buy' && mandate.minCashPct) {
+    // 2d. Cash floor check — only applies to buys that spend USDC (not pump.fun which spends SOL)
+    if (!tradeBlocked && trade.type === 'buy' && mandate.minCashPct && !market[symbol]?._pumpfun) {
       const cashFloor    = (mandate.minCashPct / 100) * portfolio.totalValueUsd;
       const availableCash = (portfolio.cashUsd ?? 0) - cashFloor;
       if (availableCash <= 0) {
