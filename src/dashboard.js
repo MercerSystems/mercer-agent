@@ -53,7 +53,7 @@ grid.set(0, 0, 1, 12, blessed.box, {
 });
 
 // Transparent blessed.box so the dim logo below the data rows shows naturally
-const tableBox = grid.set(1, 0, 6, 8, blessed.box, {
+const tableBox = grid.set(1, 0, 5, 7, blessed.box, {
   label:       ' Portfolio Holdings ',
   tags:        true,
   transparent: true,
@@ -62,7 +62,7 @@ const tableBox = grid.set(1, 0, 6, 8, blessed.box, {
   style:       { fg: 'white' },
 });
 
-const solBox = grid.set(1, 8, 3, 4, blessed.box, {
+const solBox = grid.set(1, 7, 3, 5, blessed.box, {
   label:   ' Market ',
   tags:    true,
   border:  { type: 'line', fg: 'cyan' },
@@ -71,7 +71,7 @@ const solBox = grid.set(1, 8, 3, 4, blessed.box, {
   style:   { fg: 'white' },
 });
 
-const pnlChart = grid.set(4, 8, 3, 4, contrib.line, {
+const pnlChart = grid.set(4, 7, 2, 5, contrib.line, {
   label:            ' Portfolio P&L ',
   showLegend:       false,
   border:           { type: 'line', fg: 'cyan' },
@@ -81,7 +81,25 @@ const pnlChart = grid.set(4, 8, 3, 4, contrib.line, {
   wholeNumbersOnly: false,
 });
 
-const reasonBox = grid.set(7, 0, 4, 12, blessed.box, {
+const tickerBox = grid.set(6, 0, 1, 12, blessed.box, {
+  label:   ' Live Launches ',
+  tags:    true,
+  border:  { type: 'line', fg: 'cyan' },
+  padding: { top: 0, left: 1 },
+  content: '{grey-fg}Scanning for new launches…{/}',
+  style:   { fg: 'white' },
+});
+
+const tradeLogBox = grid.set(7, 0, 4, 4, blessed.box, {
+  label:   ' Trade Log ',
+  tags:    true,
+  border:  { type: 'line', fg: 'cyan' },
+  padding: { top: 0, left: 1 },
+  content: '{grey-fg}No trades yet.{/}',
+  style:   { fg: 'white' },
+});
+
+const reasonBox = grid.set(7, 4, 4, 8, blessed.box, {
   label:        ' Claude Decisions ',
   tags:         true,
   keys:         true,
@@ -176,9 +194,32 @@ function wordWrap(text, width) {
   return lines.length ? lines : [''];
 }
 
-// ─── Table + watermark renderer ───────────────────────────────────────────────
+// ─── Sparkline + position-timer helpers ───────────────────────────────────────
 
-const COL_W   = [8, 12, 10, 11, 6, 8, 8];
+const SPARK_BARS = '▁▂▃▄▅▆▇█';
+function sparkline(prices) {
+  if (!prices || prices.length < 2) return '········';
+  const vals  = prices.slice(-8);
+  const min   = Math.min(...vals);
+  const max   = Math.max(...vals);
+  const range = max - min;
+  if (range === 0) return '▄▄▄▄▄▄▄▄';
+  return vals.map(v => SPARK_BARS[Math.round(((v - min) / range) * 7)]).join('');
+}
+
+function fmtHeld(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60)   return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+// ─── Table renderer ───────────────────────────────────────────────────────────
+// Columns: Token | Balance | Price | Value | Port% | P&L% | Trend(8)
+
+const COL_W   = [6, 9, 9, 9, 5, 8, 8];
 const COL_SEP = '  ';
 const TABLE_W = COL_W.reduce((a, b) => a + b, 0) + COL_SEP.length * (COL_W.length - 1);
 
@@ -194,24 +235,14 @@ function renderTable(portfolio, market = {}) {
 
   const divider = COL_W.map(w => '─'.repeat(w)).join(COL_SEP);
 
-  const reserveHeaders = [
-    '{cyan-fg}{bold}Token{/}',
-    '{cyan-fg}{bold}Balance{/}',
-    '{cyan-fg}{bold}Price{/}',
-    '{cyan-fg}{bold}Value{/}',
-    '{cyan-fg}{bold}Port %{/}',
-    '',
-    '',
-  ];
-
   const positionHeaders = [
     '{cyan-fg}{bold}Token{/}',
     '{cyan-fg}{bold}Balance{/}',
     '{cyan-fg}{bold}Price{/}',
     '{cyan-fg}{bold}Value{/}',
-    '{cyan-fg}{bold}Port %{/}',
-    '{cyan-fg}{bold}P&L ${/}',
-    '{cyan-fg}{bold}P&L %{/}',
+    '{cyan-fg}{bold}Port%{/}',
+    '{cyan-fg}{bold}P&L%{/}',
+    '{cyan-fg}{bold}Trend{/}',
   ];
 
   const lines = [
@@ -231,36 +262,44 @@ function renderTable(portfolio, market = {}) {
     const pnlPct   = ep && ep > 0 ? ((h.price - ep) / ep) * 100 : null;
     const pnlUsd   = pnlPct != null ? (h.value * pnlPct) / (100 + pnlPct) : null;
     const pnlColor = pnlPct == null ? 'grey-fg' : pnlPct >= 0 ? 'green-fg' : 'red-fg';
-    const pnlStr   = pnlUsd == null ? 'N/A' : `${pnlUsd >= 0 ? '+' : ''}$${Math.abs(pnlUsd).toFixed(2)}`;
     if (pnlUsd != null) { totalPnlUsd += pnlUsd; totalPnlKnown = true; }
-    // Next ladder rung target
-    const hitRungs   = new Set(trailingData?.ladderTriggered?.[h.token] ?? []);
-    const nextRung   = ladder.find((r, i) => !hitRungs.has(i));
-    const pnlPctStr  = pnlPct == null ? '—' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
-    const targetStr  = nextRung ? ` {grey-fg}→+${nextRung.pct}%{/}` : '';
+    const pnlPctStr  = pnlPct == null ? '—' : `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`;
+
+    // Price flash color when price recently changed
+    const flash      = rowFlash.get(h.token);
+    const flashOn    = flash && Date.now() < flash.expiresAt;
+    const priceColor = flashOn ? (flash.dir === 'up' ? 'green-fg' : 'red-fg') : 'white-fg';
+
+    // Trend sparkline from recent price history
+    const ph      = tokenPriceHistory[h.token];
+    const spark   = sparkline(ph ? ph.slice(-12).map(p => p.price) : null);
+    const sparkC  = pnlPct == null ? 'grey-fg' : pnlPct >= 0 ? 'green-fg' : 'red-fg';
 
     return [
       `{white-fg}${h.token}{/}`,
       '{white-fg}' + fmtQty(h.balance) + '{/}',
-      '{white-fg}' + fmtPrice(h.price) + '{/}',
+      `{${priceColor}}` + fmtPrice(h.price) + '{/}',
       '{white-fg}' + fmtUSD(h.value) + '{/}',
       '{white-fg}' + ((h.value / totalValue) * 100).toFixed(1) + '%{/}',
-      `{${pnlColor}}${pnlStr}{/}`,
-      `{${pnlColor}}${pnlPctStr}{/}${targetStr}`,
+      `{${pnlColor}}${pnlPctStr}{/}`,
+      `{${sparkC}}${spark}{/}`,
     ].map((cell, i) => padCol(cell, COL_W[i])).join(COL_SEP);
   }
 
   // ── Reserve section (SOL + USDC) above positions ─────────────────────────
   if (reserveHoldings.length > 0) {
     for (const h of reserveHoldings) {
+      const flash   = rowFlash.get(h.token);
+      const flashOn = flash && Date.now() < flash.expiresAt;
+      const pc      = flashOn ? (flash.dir === 'up' ? 'green-fg' : 'red-fg') : 'white-fg';
       lines.push([
-        padCol(`{white-fg}${h.token}{/}`,                                        COL_W[0]),
-        padCol('{white-fg}' + fmtQty(h.balance) + '{/}',                        COL_W[1]),
-        padCol('{white-fg}' + fmtPrice(h.price) + '{/}',                        COL_W[2]),
-        padCol('{white-fg}' + fmtUSD(h.value) + '{/}',                          COL_W[3]),
+        padCol(`{white-fg}${h.token}{/}`,                                          COL_W[0]),
+        padCol('{white-fg}' + fmtQty(h.balance) + '{/}',                          COL_W[1]),
+        padCol(`{${pc}}` + fmtPrice(h.price) + '{/}',                             COL_W[2]),
+        padCol('{white-fg}' + fmtUSD(h.value) + '{/}',                            COL_W[3]),
         padCol('{white-fg}' + ((h.value / totalValue) * 100).toFixed(1) + '%{/}', COL_W[4]),
-        padCol('',                                                               COL_W[5]),
-        padCol('',                                                               COL_W[6]),
+        padCol('',                                                                 COL_W[5]),
+        padCol('',                                                                 COL_W[6]),
       ].join(COL_SEP));
     }
   }
@@ -294,8 +333,8 @@ function renderTable(portfolio, market = {}) {
     padCol('',                               COL_W[2]),
     padCol(`{bold}${fmtUSD(totalValue)}{/}`, COL_W[3]),
     padCol('{bold}100%{/}',                  COL_W[4]),
-    padCol(`{${totalPnlColor}}{bold}${totalPnlStr}{/}`, COL_W[5]),
-    padCol(`{${totalPnlColor}}{bold}${totalPnlPctStr}{/}`, COL_W[6]),
+    padCol(`{${totalPnlColor}}{bold}${totalPnlPctStr}{/}`, COL_W[5]),
+    padCol('',                               COL_W[6]),
   ].join(COL_SEP));
 
   if (sPnlStr) {
@@ -307,16 +346,31 @@ function renderTable(portfolio, market = {}) {
     );
   }
 
-  // ── Watermark logo below the data rows ─────────────────────────────────────
-  lines.push('');
-  lines.push('');
-  for (const l of LOGO_LINES) {
-    const pad = ' '.repeat(Math.max(0, Math.floor((TABLE_W - l.length) / 2) - 1));
-    lines.push('{grey-fg}' + pad + l + '{/}');
+  // ── Active positions section — hold time + next target ─────────────────────
+  const activePositions = tradeHoldings.filter(h => h.value > 0);
+  if (activePositions.length > 0) {
+    lines.push('');
+    lines.push('{cyan-fg}─── POSITIONS ' + '─'.repeat(Math.max(0, TABLE_W - 15)) + '{/}');
+    for (const h of activePositions) {
+      const since  = positionSince.get(h.token);
+      const heldStr = since ? fmtHeld(Date.now() - since) : '—';
+      const hitRungs = new Set(trailingData?.ladderTriggered?.[h.token] ?? []);
+      const nextRung = ladder.find((_r, i) => !hitRungs.has(i));
+      const targetStr = nextRung
+        ? `{grey-fg}next: +${nextRung.pct}%{/}`
+        : trailingData?.[h.token]?.peakPrice
+          ? `{grey-fg}trailing -20%{/}`
+          : '{grey-fg}holding{/}';
+      const ep     = entryPrices[h.token];
+      const epStr  = ep && ep > 0 ? `entry ${fmtPrice(ep)}` : '';
+      lines.push(
+        ` {white-fg}${h.token.padEnd(8)}{/}` +
+        `{grey-fg} held {/}{cyan-fg}${heldStr.padEnd(8)}{/}` +
+        `{grey-fg}${epStr.padEnd(18)}{/}` +
+        targetStr
+      );
+    }
   }
-  lines.push('{grey-fg}' + ' '.repeat(Math.max(0, Math.floor((TABLE_W - 13) / 2) - 1)) + 'S Y S T E M S{/}');
-  const tagline = 'Autonomous DeFi Portfolio Agent · Solana';
-  lines.push('{grey-fg}' + ' '.repeat(Math.max(0, Math.floor((TABLE_W - tagline.length) / 2) - 1)) + tagline + '{/}');
 
   return lines.join('\n');
 }
@@ -445,6 +499,63 @@ function updateMarketBox(token, market) {
     `${bestLine}\n` +
     `${worstLine}\n`
   );
+}
+
+function updateLaunchTicker() {
+  const launches = Object.values(latestLaunches);
+  if (launches.length === 0) {
+    tickerBox.setContent('{grey-fg} ◉  No new launches discovered — scanning…{/}');
+    return;
+  }
+  // Cycle through launches 4 at a time every 10s
+  const visible = 4;
+  const start   = tickerOffset % launches.length;
+  const slice   = [];
+  for (let i = 0; i < visible; i++) slice.push(launches[(start + i) % launches.length]);
+
+  const items = slice.map(t => {
+    const mcap   = t.marketCapUsd < 1_000_000
+      ? `$${(t.marketCapUsd / 1000).toFixed(0)}K`
+      : `$${(t.marketCapUsd / 1_000_000).toFixed(1)}M`;
+    const age    = `${t.ageHours}h`;
+    const ch1h   = t.change1h ?? 0;
+    const chStr  = `${ch1h >= 0 ? '▲+' : '▼'}${Math.abs(ch1h).toFixed(1)}%`;
+    const chCol  = ch1h >= 0 ? 'green-fg' : 'red-fg';
+    const bs     = t.buySellRatio != null ? ` bs:${t.buySellRatio.toFixed(2)}` : '';
+    return `{white-fg}{bold}${t.symbol}{/} {grey-fg}${mcap} ${age}${bs}{/} {${chCol}}${chStr}{/}`;
+  });
+
+  tickerBox.setContent(
+    `{cyan-fg}◉ LAUNCHES (${launches.length}){/}   ` +
+    items.join('   {grey-fg}│{/}   ')
+  );
+}
+
+function updateTradeLog() {
+  if (tradeHistory.length === 0) {
+    tradeLogBox.setContent('{grey-fg}No trades this session.{/}');
+    return;
+  }
+  const lines = [
+    '{cyan-fg}{bold}TIME   SIDE  TOKEN        AMT{/}',
+    '{cyan-fg}' + '─'.repeat(35) + '{/}',
+  ];
+  for (const t of tradeHistory.slice(0, 16)) {
+    const time  = t.time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const side  = (t.side ?? t.type ?? '?').toLowerCase();
+    const sc    = side === 'buy' ? 'green-fg' : 'red-fg';
+    const sign  = side === 'buy' ? '+' : '−';
+    const asset = (t.asset ?? '?').slice(0, 9).padEnd(9);
+    const amt   = fmtUSD(t.amountUsd ?? 0);
+    const icon  = t.status === 'executed' ? '{green-fg}✓{/}' : '{grey-fg}~{/}';
+    lines.push(
+      `{grey-fg}${time}{/} ` +
+      `{${sc}}{bold}${sign}${side.toUpperCase().padEnd(4)}{/} ` +
+      `{white-fg}${asset}{/} ` +
+      `{grey-fg}${amt}{/} ${icon}`
+    );
+  }
+  tradeLogBox.setContent(lines.join('\n'));
 }
 
 function buildChartBounds(pctSeries) {
@@ -753,6 +864,7 @@ function updateReasonDisplay(result, triggeredBy = null) {
   // Record executed trades in session trade history
   if (execution?.trades) {
     for (const t of execution.trades) {
+      if (t.status === 'executed') sessionTradeCount++;
       if (t.status === 'executed' || t.status === 'dry_run') {
         tradeHistory.unshift({
           time:    new Date(),
@@ -765,6 +877,7 @@ function updateReasonDisplay(result, triggeredBy = null) {
       }
     }
     if (tradeHistory.length > 20) tradeHistory = tradeHistory.slice(0, 20);
+    updateTradeLog();
   }
 
   // macOS notifications for significant events
@@ -854,8 +967,11 @@ function setStatus(mandate, violations, blocked, msg) {
     ? '{green-fg}◈ LIVE{/}'
     : '{yellow-fg}◈ MOCK{/}';
 
+  const launchCount = Object.keys(latestLaunches).length;
+  const launchStr   = launchCount > 0 ? `{cyan-fg}${launchCount} launches{/}  ` : '';
+  const tradeStr    = sessionTradeCount > 0 ? `{green-fg}${sessionTradeCount} trade${sessionTradeCount !== 1 ? 's' : ''}{/}  ` : '';
   statusBox.setContent(
-    `{grey-fg} [q]{/} Quit {grey-fg}[r]{/} Reason {grey-fg}[p]{/} Portfolio {grey-fg}[a]{/} Ask {grey-fg}[m]{/} Market {grey-fg}[c]{/} Chart {grey-fg}[h]{/} History {grey-fg}[1][4][0]{/} Window  {grey-fg}|{/}  ${walletTag}  ${mandateStr}  {grey-fg}|{/}  ${violStr}  {grey-fg}|{/}  ${msg}`
+    `{grey-fg} [q]{/} Quit {grey-fg}[r]{/} Reason {grey-fg}[p]{/} Portfolio {grey-fg}[a]{/} Ask {grey-fg}[s]{/} Sell {grey-fg}[m]{/} Market {grey-fg}[c]{/} Chart {grey-fg}[h]{/} History {grey-fg}[1][4][0]{/} Window  {grey-fg}|{/}  ${walletTag}  ${mandateStr}  {grey-fg}|{/}  ${violStr}  {grey-fg}|{/}  ${launchStr}${tradeStr}${msg}`
   );
 }
 
@@ -948,6 +1064,7 @@ setInterval(() => {
     if (spinnerActive) {
       spinnerActive = false;
       tableBox.setLabel(' Portfolio Holdings ');
+      tradeLogBox.setLabel(' Trade Log ');
       reasonBox.setLabel(' Claude Decisions ');
       screen.render();
     }
@@ -957,6 +1074,7 @@ setInterval(() => {
   spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
   const spin = SPINNER_FRAMES[spinnerFrame];
   tableBox.setLabel(` Portfolio Holdings  {cyan-fg}${spin}{/} `);
+  tradeLogBox.setLabel(` Trade Log {cyan-fg}${spin}{/} `);
   reasonBox.setLabel(isRefreshing
     ? ` Claude Decisions {cyan-fg}${spin} reasoning{/} `
     : ` Claude Decisions {cyan-fg}${spin}{/} `);
@@ -984,6 +1102,11 @@ let selectedChartSeries  = 'portfolio'; // 'portfolio' | token symbol
 const tokenPriceHistory  = {};       // token → [{timestamp, price}]
 let sessionBaseline      = null;     // first portfolio value this session — P&L anchor
 let chartWindow          = 90;       // number of history points to show in chart
+let latestLaunches       = {};       // last DexScreener launch snapshot
+let tickerOffset         = 0;        // cycling position in launches ticker
+let sessionTradeCount    = 0;        // total executed trades this session
+const rowFlash           = new Map(); // symbol → { dir: 'up'|'down', expiresAt }
+const positionSince      = new Map(); // symbol → timestamp (when first observed)
 
 // ── Load last decision from disk so the box isn't blank on first open ─────────
 function loadLastDecision() {
@@ -1125,14 +1248,29 @@ async function doDataRefresh() {
     walletSource       = portfolio.source ?? 'mock';
     lastPortfolio      = portfolio;
     lastMarketSnapshot = mergePortfolioIntoMarket(market, portfolio);
+
+    // Track position entry times
+    const heldSyms = new Set((portfolio.holdings ?? []).map(h => h.token).filter(Boolean));
+    for (const sym of heldSyms) {
+      if (sym !== 'USDC' && sym !== 'SOL' && !positionSince.has(sym)) positionSince.set(sym, Date.now());
+    }
+    for (const [sym] of positionSince) { if (!heldSyms.has(sym)) positionSince.delete(sym); }
+
     updatePortfolioTable(portfolio, lastMarketSnapshot);
     updateMarketBox(selectedMarketToken, lastMarketSnapshot);
+    updateTradeLog();
 
     const mandates = await fetchJSON(`${API_BASE}/mandates`);
     lastMandate    = mandates[MANDATE_PRESET];
 
     const statsData = await fetchJSON(`${API_BASE}/stats`).catch(() => null);
     if (statsData?.tradeStats) lastTradeStats = statsData.tradeStats;
+
+    // Fetch new launches for ticker
+    fetchJSON(`${API_BASE}/launches`).then(launches => {
+      latestLaunches = launches ?? {};
+      updateLaunchTicker();
+    }).catch(() => {});
 
     if (liveHistory.length === 0) {
       const h = await fetchJSON(`${API_BASE}/portfolio/history`);
@@ -1356,16 +1494,80 @@ function confirmQuit() {
 
 // ── Resize — reflow all baked-width content to new terminal dimensions ────────
 screen.on('resize', () => {
-  if (lastReasonResult) updateReasonDisplay(lastReasonResult, lastReasonTrigger);
-  if (lastPortfolio)    updatePortfolioTable(lastPortfolio, lastMarketSnapshot ?? {});
+  if (lastReasonResult)   updateReasonDisplay(lastReasonResult, lastReasonTrigger);
+  if (lastPortfolio)      updatePortfolioTable(lastPortfolio, lastMarketSnapshot ?? {});
   if (lastMarketSnapshot) updateMarketBox(selectedMarketToken, lastMarketSnapshot);
+  updateLaunchTicker();
+  updateTradeLog();
   screen.render();
 });
+
+// ─── Manual sell ─────────────────────────────────────────────────────────────
+
+function confirmSell(symbol) {
+  let secsLeft = 5;
+  const restore = () => {
+    clearInterval(countdown);
+    if (lastUpdatedAt) setStatus(lastMandate, lastViolations, lastBlocked,
+      `{green-fg}Updated: ${lastUpdatedAt.toLocaleTimeString()}{/}`);
+    screen.render();
+  };
+  const showPrompt = () => {
+    statusBox.setContent(`{red-fg}Force sell ${symbol}?{/}  {cyan-fg}[y]{/} Yes  {cyan-fg}[n]{/} No  {grey-fg}(${secsLeft}s){/}`);
+    screen.render();
+  };
+  showPrompt();
+  const countdown = setInterval(() => { secsLeft--; if (secsLeft <= 0) { restore(); return; } showPrompt(); }, 1000);
+  screen.once('keypress', (ch) => {
+    clearInterval(countdown);
+    if (ch === 'y' || ch === 'Y') {
+      statusBox.setContent(`{yellow-fg}Selling ${symbol}…{/}`);
+      screen.render();
+      fetchJSON(`${API_BASE}/force-sell`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol }),
+      }, 30_000).then(r => {
+        notify('Mercer — Manual Sell', `${symbol} sell submitted`);
+        if (r.execution?.trades) {
+          for (const t of r.execution.trades) {
+            if (t.status === 'executed') sessionTradeCount++;
+            tradeHistory.unshift({ time: new Date(), side: 'sell', asset: symbol, amountUsd: t.amountUsd ?? 0, status: t.status });
+          }
+          if (tradeHistory.length > 20) tradeHistory = tradeHistory.slice(0, 20);
+          updateTradeLog();
+        }
+        doDataRefresh();
+      }).catch(err => {
+        statusBox.setContent(`{red-fg}Sell failed: ${err.message}{/}`);
+        screen.render();
+        setTimeout(restore, 3000);
+      });
+    } else {
+      restore();
+    }
+  });
+}
 
 screen.key(['q', 'C-c'],  () => { confirmQuit(); });
 screen.key(['r'],          () => { doRefresh(true); });
 screen.key(['p'],          () => { doDataRefresh(); });
 screen.key(['a'],          () => { openAskTerminal(); });
+
+screen.key(['s'], () => {
+  if (activeDropdown) return;
+  const tradeable = (lastPortfolio?.holdings ?? [])
+    .filter(h => h.token && h.token !== 'USDC' && h.token !== 'SOL' && h.value > 0)
+    .map(h => `${h.token.padEnd(10)} ${fmtUSD(h.value)}`);
+  if (tradeable.length === 0) {
+    setStatus(lastMandate, lastViolations, lastBlocked, '{grey-fg}No positions to sell{/}');
+    return;
+  }
+  showDropdown(['Cancel', ...tradeable], tableBox, (choice) => {
+    if (choice.startsWith('Cancel')) return;
+    const symbol = choice.trim().split(/\s+/)[0];
+    confirmSell(symbol);
+  });
+});
 screen.key(['up'],         () => { reasonBox.scroll(-1); screen.render(); });
 screen.key(['down'],       () => { reasonBox.scroll(1);  screen.render(); });
 screen.key(['pageup'],     () => { reasonBox.scroll(-5); screen.render(); });
@@ -1427,10 +1629,14 @@ async function doChartRefresh() {
     const market = await fetchJSON(`${API_BASE}/market`);
     mergePortfolioIntoMarket(market, lastPortfolio);
 
-    // Track per-token price history for individual token charts
+    // Track per-token price history + flash on price change
     const now = new Date().toISOString();
     for (const [sym, data] of Object.entries(market)) {
       if (!tokenPriceHistory[sym]) tokenPriceHistory[sym] = [];
+      const prev = lastMarketSnapshot?.[sym];
+      if (prev?.price && data.price && data.price !== prev.price) {
+        rowFlash.set(sym, { dir: data.price > prev.price ? 'up' : 'down', expiresAt: Date.now() + 2500 });
+      }
       tokenPriceHistory[sym].push({ timestamp: now, price: data.price });
       if (tokenPriceHistory[sym].length > 300) tokenPriceHistory[sym] = tokenPriceHistory[sym].slice(-300);
     }
@@ -1480,5 +1686,10 @@ showSplash(() => {
   setInterval(doDataRefresh, DATA_REFRESH_MS);
   setInterval(doChartRefresh, 1_000);
   setInterval(pollTradeSignal, 5_000);
+  // Cycle ticker every 10s
+  setInterval(() => {
+    const n = Object.keys(latestLaunches).length;
+    if (n > 0) { tickerOffset = (tickerOffset + 4) % n; updateLaunchTicker(); screen.render(); }
+  }, 10_000);
   doRefresh(true);
 });
