@@ -31,7 +31,7 @@ const MAX_PRICE_DROP_1H=       -40;  // don't enter tokens dumping >40% in 1h
 
 // DEXes we can trade on — either via Jupiter (graduated) or pump.fun bonding curve (pre-graduation)
 const JUPITER_DEXES  = new Set(['raydium', 'raydium-clmm', 'raydium-cpmm', 'orca', 'whirlpool', 'meteora', 'meteora-dlmm', 'lifinity-v2', 'openbook-v2']);
-const PUMPFUN_DEXES  = new Set(['pump-fun']);
+const PUMPFUN_DEXES  = new Set(['pump-fun', 'pumpfun', 'pumpswap']); // pumpswap = graduated pump.fun tokens on new PumpSwap DEX
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 async function fetchJson(url) {
@@ -85,7 +85,7 @@ function normalize(pair, profile = null) {
     socialScore,   // 0–3: number of social channels present
     description,   // short project description from DexScreener profile
     _dexscreener:  true,
-    _pumpfun:      pair.dexId === 'pump-fun',
+    _pumpfun:      PUMPFUN_DEXES.has(pair.dexId),
   };
 }
 
@@ -101,83 +101,121 @@ function meetsQuality(entry) {
   return true;
 }
 
+// ─── DexScreener boosted tokens ───────────────────────────────────────────────
+// Tokens with active boosts are being actively promoted — team/community is
+// spending real money on visibility. Combined with pair data this gives us
+// fresh pump.fun coins with social context and real price/volume data.
+const BOOSTS_URL = 'https://api.dexscreener.com/token-boosts/latest/v1';
+
+async function fetchBoostedCoins() {
+  try {
+    const boosts = await fetchJson(BOOSTS_URL);
+    if (!Array.isArray(boosts)) return { mints: [], profileData: new Map() };
+
+    const profileData = new Map();
+    const mints = [];
+
+    for (const b of boosts) {
+      if (b.chainId !== 'solana') continue;
+      const mint = b.tokenAddress;
+      if (!mint) continue;
+      mints.push(mint);
+      profileData.set(mint, {
+        description: b.description ?? null,
+        links:       b.links       ?? [],
+        boostAmount: b.totalAmount ?? 0,
+      });
+    }
+
+    return { mints: [...new Set(mints)], profileData };
+  } catch (err) {
+    console.warn(`[Mercer DexScreener] Boosts fetch failed: ${err.message}`);
+    return { mints: [], profileData: new Map() };
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
- * Fetches and returns new Solana token launches with momentum.
- * Results are cached for 60s to avoid hammering DexScreener.
+ * Fetches new Solana token launches from two sources:
+ *   1. pump.fun API — pre-graduation bonding curve coins (primary source)
+ *   2. DexScreener profiles — graduated tokens with DEX pairs
+ * Results cached for 60s.
  *
  * @returns {Promise<Record<string, object>>} Market map entries keyed by symbol
  */
 export async function fetchNewLaunches() {
   if (_cache && (Date.now() - _cacheTime) < CACHE_TTL_MS) return _cache;
 
-  try {
-    // 1. Get latest token profiles — includes description, social links (Twitter/TG/website)
-    const profiles = await fetchJson(PROFILES_URL);
-    const profileData = new Map(); // mint → { description, links }
-    const solanaMints = profiles
-      .filter(p => p.chainId === 'solana')
-      .map(p => {
-        profileData.set(p.tokenAddress, {
-          description: p.description ?? null,
-          links:       p.links       ?? [],
-        });
-        return p.tokenAddress;
-      })
-      .slice(0, 100); // take latest 100 profiles
+  const result      = {};
+  const seenSymbols = new Set(['SOL', 'USDC']);
 
-    if (solanaMints.length === 0) { _cache = {}; _cacheTime = Date.now(); return {}; }
-
-    // 2. Batch-fetch pair data (DexScreener allows up to 30 mints per request)
-    const BATCH = 30;
+  // ── Helper: batch-fetch pair data and normalize ───────────────────────────
+  async function processMints(mints, profileData) {
+    const BATCH    = 30;
     const allPairs = [];
-    for (let i = 0; i < solanaMints.length; i += BATCH) {
-      const batch = solanaMints.slice(i, i + BATCH);
+    for (let i = 0; i < mints.length; i += BATCH) {
       try {
-        const data = await fetchJson(TOKENS_URL + batch.join(','));
+        const data = await fetchJson(TOKENS_URL + mints.slice(i, i + BATCH).join(','));
         allPairs.push(...(data.pairs ?? []));
       } catch (err) {
         console.warn(`[Mercer DexScreener] Batch fetch failed: ${err.message}`);
       }
     }
-
-    // 3. Group by base token, pick best pair per token
     const byMint = new Map();
     for (const pair of allPairs) {
       if (pair.chainId !== 'solana' || !pair.priceUsd) continue;
       const mint = pair.baseToken?.address;
       if (!mint) continue;
       const existing = byMint.get(mint);
-      if (!existing || (pair.volume?.h24 ?? 0) > (existing.volume?.h24 ?? 0)) {
-        byMint.set(mint, pair);
-      }
+      if (!existing || (pair.volume?.h24 ?? 0) > (existing.volume?.h24 ?? 0)) byMint.set(mint, pair);
     }
-
-    // 4. Normalize, filter, deduplicate by symbol
-    const result = {};
-    const seenSymbols = new Set(['SOL', 'USDC']); // never override core tokens
-
+    let count = 0;
     for (const pair of byMint.values()) {
-      const profile = profileData.get(pair.baseToken?.address) ?? null;
-      const entry = normalize(pair, profile);
+      const profile = profileData?.get(pair.baseToken?.address) ?? null;
+      const entry   = normalize(pair, profile);
       if (!entry.symbol || seenSymbols.has(entry.symbol)) continue;
       if (!meetsQuality(entry)) continue;
-
       seenSymbols.add(entry.symbol);
       result[entry.symbol] = entry;
-
-      // 5. Register mint so executor can trade without CoinGecko lookup
-      registerMint(entry.symbol, entry.mint, 6); // most pump.fun tokens = 6 decimals
+      registerMint(entry.symbol, entry.mint, 6);
+      count++;
     }
-
-    console.log(`[Mercer DexScreener] ${Object.keys(result).length} new launches discovered (${solanaMints.length} profiles scanned)`);
-    _cache = result;
-    _cacheTime = Date.now();
-    return result;
-
-  } catch (err) {
-    console.warn(`[Mercer DexScreener] Fetch failed: ${err.message}`);
-    return _cache ?? {};
+    return count;
   }
+
+  // ── Source 1: DexScreener boosted tokens (active promotion = real interest)
+  try {
+    const { mints: boostMints, profileData: boostProfiles } = await fetchBoostedCoins();
+    if (boostMints.length > 0) {
+      const n = await processMints(boostMints, boostProfiles);
+      console.log(`[Mercer DexScreener] ${n} boosted launches (${boostMints.length} boosts scanned)`);
+    }
+  } catch (err) {
+    console.warn(`[Mercer DexScreener] Boosts source failed: ${err.message}`);
+  }
+
+  // ── Source 2: DexScreener profiles (broader coverage) ────────────────────
+  try {
+    const profiles    = await fetchJson(PROFILES_URL);
+    const profileData = new Map();
+    const solanaMints = profiles
+      .filter(p => p.chainId === 'solana')
+      .map(p => {
+        profileData.set(p.tokenAddress, { description: p.description ?? null, links: p.links ?? [] });
+        return p.tokenAddress;
+      })
+      .slice(0, 100);
+    if (solanaMints.length > 0) {
+      const n = await processMints(solanaMints, profileData);
+      console.log(`[Mercer DexScreener] ${n} profile launches (${solanaMints.length} profiles scanned)`);
+    }
+  } catch (err) {
+    console.warn(`[Mercer DexScreener] Profiles source failed: ${err.message}`);
+  }
+
+  console.log(`[Mercer] New launches total: ${Object.keys(result).length}`);
+  _cache     = result;
+  _cacheTime = Date.now();
+  return result;
 }
