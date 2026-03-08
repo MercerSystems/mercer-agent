@@ -194,8 +194,8 @@ Every decision is validated against an active mandate before execution:
 | Preset | Max Position | Stop-Loss | Micro-Cap Stop | Trailing Stop | Max Drawdown | Min Market Cap |
 |---|---|---|---|---|---|---|
 | `conservative` | 20% | 10% | — | 8% | 15% | $500M |
-| `moderate` | 35% | 10% | 8% (<$5M cap) | 10% | 25% | $5K |
-| `aggressive` | 50% | 35% | — | 25% | 40% | $1K |
+| `moderate` | 35% | 15% | 8% (<$5M cap) | 10% | 25% | $5K |
+| `aggressive` | 50% | 35% | — | 25% | 40% | $5M |
 
 The `moderate` mandate's $5K minimum market cap floor enables pump.fun bonding curve tokens. DexScreener-sourced tokens bypass the standard 24h volume check (they're too new to have it), but must still pass the quality filters baked into the DexScreener discovery layer.
 
