@@ -14,17 +14,32 @@ const TOKEN_2022_PROGRAM = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEp
  * Fetches all on-chain token balances for a Solana wallet.
  * Queries both the classic SPL Token program and Token-2022 so tokens like
  * BIO (which use the newer program) are always included.
+ * Automatically retries on the backup RPC if the primary fails with a network error.
  *
  * @param {string} walletAddress - Base58-encoded Solana wallet address
  * @param {string} rpcUrl        - Solana RPC endpoint URL
  * @returns {object} Portfolio shaped like DEFAULT_BASE_PORTFOLIO
  */
 export async function fetchWalletPortfolio(walletAddress, rpcUrl) {
-  const connection = new Connection(rpcUrl, 'confirmed');
+  const backupUrl = process.env.SOLANA_RPC_URL_BACKUP;
+  let connection = new Connection(rpcUrl, 'confirmed');
+  let usingBackup = false;
   const pubkey     = new PublicKey(walletAddress);
 
-  // Fetch native SOL balance
-  const lamports   = await connection.getBalance(pubkey);
+  // Fetch native SOL balance (retry on backup RPC if primary fails)
+  let lamports;
+  try {
+    lamports = await connection.getBalance(pubkey);
+  } catch (err) {
+    if (backupUrl && !usingBackup && (err.message?.includes('fetch failed') || err.message?.includes('ECONNREFUSED') || err.message?.includes('ETIMEDOUT'))) {
+      console.warn(`[Mercer Wallet] Primary RPC failed (${err.message}) — switching to backup RPC`);
+      connection   = new Connection(backupUrl, 'confirmed');
+      usingBackup  = true;
+      lamports     = await connection.getBalance(pubkey);
+    } else {
+      throw err;
+    }
+  }
   const solBalance = lamports / LAMPORTS_PER_SOL;
 
   // Fetch token accounts from both Token programs in parallel
