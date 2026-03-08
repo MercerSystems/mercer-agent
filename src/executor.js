@@ -282,8 +282,11 @@ async function executeTrade(trade, market, jupiterApi) {
       console.error(`[Mercer Executor] ${msg}`);
       return { ...trade, status: 'blocked', reason: msg };
     }
-    const minTradeUsd = parseFloat(process.env.MIN_TRADE_USD) || 3;
-    const pumpMaxUsd  = parseFloat(process.env.PUMP_MAX_USD)  || 10; // hard cap on pump.fun plays
+    const minTradeUsd      = parseFloat(process.env.MIN_TRADE_USD) || 3;
+    const _maxTradeForPump = parseFloat(process.env.MAX_TRADE_USD) || 35;
+    // PUMP_MAX_USD: explicit env override, else 30% of MAX_TRADE_USD (min $5)
+    // Scales automatically as portfolio grows and MAX_TRADE_USD is raised
+    const pumpMaxUsd  = parseFloat(process.env.PUMP_MAX_USD) || Math.max(5, _maxTradeForPump * 0.30);
     const spendUsd    = Math.min(amountUsd, pumpMaxUsd);
     if (spendUsd < minTradeUsd) {
       return { ...trade, status: 'skipped', reason: `Pump.fun buy $${spendUsd.toFixed(2)} below $${minTradeUsd} minimum` };

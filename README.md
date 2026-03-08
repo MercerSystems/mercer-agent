@@ -407,7 +407,7 @@ All endpoints served on `http://localhost:3000`.
 | `WATCHDOG_INTERVAL_MS` | No | `30000` | Watchdog check interval (ms) |
 | `ALERT_1H_DROP_PCT` | No | `5.0` | 1h momentum alert threshold % |
 | `DATA_REFRESH_MS` | No | `60000` | Dashboard data refresh interval (ms) |
-| `PUMP_MAX_USD` | No | `10` | Max USD per pump.fun bonding curve buy |
+| `PUMP_MAX_USD` | No | auto | Max USD per pump.fun buy. Defaults to 30% of `MAX_TRADE_USD` (min $5). Set explicitly to override. |
 
 ---
 
