@@ -24,9 +24,9 @@ let _cacheTime = 0;
 // ─── Filters ──────────────────────────────────────────────────────────────────
 const MIN_MARKET_CAP   =     5_000;  // $5K — must have some traction
 const MAX_MARKET_CAP   = 2_000_000;  // $2M — small enough for asymmetric return
-const MIN_VOL_1H       =     2_000;  // $2K volume in last hour — actively trading
-const MIN_BUY_SELL_5M  =       0.5;  // buys / (buys+sells) in 5m — majority buying, not dumping
-const MAX_AGE_HOURS    =        48;  // max 48h old — fresh launches only
+const MIN_VOL_1H       =       500;  // $500 1h volume — low bar to catch early movers
+const MIN_BUY_SELL_5M  =      0.40;  // buys / (buys+sells) in 5m — more buys than sells
+const MAX_AGE_HOURS    =        72;  // max 72h old — give 3-day window for fresh launches
 const MAX_PRICE_DROP_1H=       -40;  // don't enter tokens dumping >40% in 1h
 
 // DEXes we can trade on — either via Jupiter (graduated) or pump.fun bonding curve (pre-graduation)
@@ -125,11 +125,11 @@ export async function fetchNewLaunches() {
         });
         return p.tokenAddress;
       })
-      .slice(0, 60); // take latest 60
+      .slice(0, 100); // take latest 100 profiles
 
     if (solanaMints.length === 0) { _cache = {}; _cacheTime = Date.now(); return {}; }
 
-    // 2. Batch-fetch pair data (max 30 mints per request)
+    // 2. Batch-fetch pair data (DexScreener allows up to 30 mints per request)
     const BATCH = 30;
     const allPairs = [];
     for (let i = 0; i < solanaMints.length; i += BATCH) {
